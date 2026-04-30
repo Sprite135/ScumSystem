@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Scrum System</title>
+    <link rel="stylesheet" href="css/styles.css?v=2100">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="main-app" id="main-app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <i class="fas fa-users-cog"></i>
+                <span>Scrum System</span>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-page="dashboard" onclick="navigateTo('dashboard')">
+                    <i class="fas fa-tachometer-alt"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" data-page="backlog" onclick="navigateTo('backlog')">
+                    <i class="fas fa-list-alt"></i>
+                    <span>Historias</span>
+                </a>
+            </nav>
+            
+            <!-- Projects Section -->
+            <div class="sidebar-projects">
+                <div class="sidebar-projects-header">
+                    <span>Proyectos</span>
+                    <button class="btn btn-icon btn-small" onclick="showModal('project-modal')" title="Crear Proyecto">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                </div>
+                <div class="projects-list" id="sidebar-projects-list">
+                    <!-- Projects loaded dynamically -->
+                </div>
+            </div>
+            <div class="sidebar-footer">
+                <button class="btn btn-icon notification-btn" onclick="openNotifications()" title="Notificaciones">
+                    <i class="fas fa-bell"></i>
+                    <span class="notification-badge" id="notification-badge" style="display: none;">0</span>
+                </button>
+                <div class="user-avatar-circle" id="user-avatar">U</div>
+                <div class="user-info">
+                    <span id="user-name">Usuario</span>
+                    <small id="user-role">Rol</small>
+                </div>
+                <button id="logout-btn" class="btn btn-icon" onclick="logout()">
+                    <i class="fas fa-sign-out-alt"></i>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Content -->
+        <main class="content" id="main-content">
+            <!-- Pages loaded dynamically -->
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <!-- Project Modal -->
+    <div id="project-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-header-left">
+                    <div class="modal-icon">
+                        <i class="fas fa-folder-plus"></i>
+                    </div>
+                    <div>
+                        <h3>Nuevo Proyecto</h3>
+                        <p class="modal-subtitle">Crea un nuevo proyecto para tu equipo</p>
+                    </div>
+                </div>
+                <button class="btn btn-icon" onclick="hideModal('project-modal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="project-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Nombre del Proyecto *</label>
+                        <input type="text" id="project-name" required placeholder="Ej: Sistema de Gestión">
+                    </div>
+                    <div class="form-group">
+                        <label>Clave del Proyecto</label>
+                        <input type="text" id="project-key" placeholder="Ej: SG" maxlength="4">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Descripción</label>
+                    <textarea id="project-description" rows="3" placeholder="Describe el propósito del proyecto..."></textarea>
+                </div>
+                <div class="form-section">
+                    <h4><i class="fas fa-palette"></i> Personalización</h4>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Color del Proyecto</label>
+                            <div class="color-picker">
+                                <input type="color" id="project-color" value="#8b5cf6">
+                                <span class="color-label">Seleccionar color</span>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Icono</label>
+                            <select id="project-icon">
+                                <option value="folder">📁 Carpeta</option>
+                                <option value="rocket">🚀 Cohete</option>
+                                <option value="code">💻 Código</option>
+                                <option value="mobile">📱 Móvil</option>
+                                <option value="globe">🌐 Web</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-section">
+                    <h4><i class="fas fa-users"></i> Miembros (Opcional)</h4>
+                    <p class="section-hint">Puedes añadir miembros ahora o más tarde desde la configuración del proyecto.</p>
+                    <div class="member-search">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="email" id="member-email" placeholder="Buscar por correo electrónico...">
+                            <button type="button" class="btn btn-small" onclick="searchMember()">
+                                <i class="fas fa-plus"></i> Añadir
+                            </button>
+                        </div>
+                    </div>
+                    <div class="members-list" id="members-to-add"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('project-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-plus"></i> Crear Proyecto
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Sprint Modal -->
+    <div id="sprint-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Nuevo Sprint</h3>
+                <button class="btn btn-icon" onclick="hideModal('sprint-modal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="sprint-form">
+                <div class="form-group">
+                    <label>Proyecto</label>
+                    <select id="sprint-project" required></select>
+                </div>
+                <div class="form-group">
+                    <label>Nombre del Sprint</label>
+                    <input type="text" id="sprint-name" required placeholder="">
+                </div>
+                <div class="form-group">
+                    <label>Meta del Sprint</label>
+                    <textarea id="sprint-goal" rows="2" placeholder=""></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Fecha Inicio</label>
+                        <input type="date" id="sprint-start" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Fecha Fin</label>
+                        <input type="date" id="sprint-end" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('sprint-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Crear Sprint</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Story Modal -->
+    <div id="story-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="story-modal-title">Nueva Historia de Usuario</h3>
+                <button class="btn btn-icon" onclick="hideModal('story-modal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="story-form" onsubmit="handleCreateStory(event)">
+                <input type="hidden" id="story-id">
+                <input type="hidden" id="story-project">
+                <input type="hidden" id="story-sprint">
+                <div class="form-group">
+                    <label>Título</label>
+                    <input type="text" id="story-title" required placeholder="">
+                </div>
+                <div class="form-group">
+                    <label>Descripción</label>
+                    <textarea id="story-description" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Criterios de Aceptación</label>
+                    <textarea id="story-criteria" rows="3"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Story Points</label>
+                        <input type="number" id="story-points" min="1" max="100" placeholder="">
+                    </div>
+                    <div class="form-group">
+                        <label>Prioridad</label>
+                        <select id="story-priority">
+                            <option value="">Seleccionar...</option>
+                            <option value="0">Baja</option>
+                            <option value="1">Media</option>
+                            <option value="2">Alta</option>
+                            <option value="3">Crítica</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('story-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Crear Historia</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Notifications Modal -->
+    <div id="notifications-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-bell"></i> Notificaciones</h3>
+                <button class="modal-close" onclick="hideModal('notifications-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="notifications-header">
+                    <button class="btn btn-small btn-secondary" onclick="markAllAsRead()">
+                        <i class="fas fa-check-double"></i> Marcar todas como leídas
+                    </button>
+                </div>
+                <div id="notifications-list" class="notifications-list">
+                    <p class="text-muted text-center">Cargando notificaciones...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Members Modal -->
+    <div id="add-members-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-user-plus"></i> Agregar Miembros</h3>
+                <button class="modal-close" onclick="hideModal('add-members-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-subtitle">Proyecto: <strong id="add-members-project-name"></strong></p>
+                
+                <div class="form-group">
+                    <label>Buscar por email</label>
+                    <div class="member-search-box">
+                        <input type="email" id="member-email-search" placeholder="usuario@ejemplo.com">
+                        <button type="button" class="btn btn-primary" onclick="searchMemberByEmail()">
+                            <i class="fas fa-search"></i> Buscar
+                        </button>
+                    </div>
+                    <div id="member-search-result" class="member-search-result"></div>
+                </div>
+                
+                <div class="members-to-add-section" id="members-to-add-section" style="display: none;">
+                    <label>Miembros a agregar:</label>
+                    <div id="members-to-add-list" class="members-to-add-list"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="hideModal('add-members-modal')">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="confirm-add-members-btn" onclick="confirmAddMembers()">
+                    <i class="fas fa-save"></i> Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="modal">
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h3><i class="fas fa-exclamation-triangle"></i> Eliminar Proyecto</h3>
+            </div>
+            <div class="modal-body">
+                <p>¿Estás seguro de que deseas eliminar el proyecto <strong id="delete-project-name"></strong>?</p>
+                <p class="text-muted">Esta acción no se puede deshacer.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="hideModal('delete-modal')">Cancelar</button>
+                <button type="button" class="btn btn-danger" id="confirm-delete-btn">Eliminar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leave Project Modal -->
+    <div id="leave-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-sign-out-alt"></i> Salir del proyecto</h3>
+                <button class="modal-close" onclick="hideModal('leave-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>¿Estás seguro de que deseas salir del proyecto <strong id="leave-project-name"></strong>?</p>
+                <p class="text-muted">Ya no tendrás acceso a este proyecto ni podrás ver sus historias.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="hideModal('leave-modal')">Cancelar</button>
+                <button type="button" class="btn btn-warning" id="confirm-leave-btn">Salir</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Configure Project Modal -->
+    <div id="configure-project-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-header-left">
+                    <div class="modal-icon">
+                        <i class="fas fa-cog"></i>
+                    </div>
+                    <div>
+                        <h3>Configurar Proyecto</h3>
+                        <p class="modal-subtitle">Edita la configuración del proyecto</p>
+                    </div>
+                </div>
+                <button class="btn btn-icon" onclick="hideModal('configure-project-modal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="configure-project-form">
+                <input type="hidden" id="configure-project-id">
+                <div class="form-group">
+                    <label>Nombre del Proyecto *</label>
+                    <input type="text" id="configure-project-name" required placeholder="Ej: Sistema de Gestión">
+                </div>
+                <div class="form-group">
+                    <label>Clave del Proyecto</label>
+                    <input type="text" id="configure-project-key" placeholder="Ej: SG" maxlength="4">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Color del Proyecto</label>
+                        <div class="color-picker">
+                            <input type="color" id="configure-project-color" value="#8b5cf6">
+                            <span class="color-label">Seleccionar color</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Icono</label>
+                        <select id="configure-project-icon">
+                            <option value="folder">📁 Carpeta</option>
+                            <option value="rocket">🚀 Cohete</option>
+                            <option value="code">💻 Código</option>
+                            <option value="mobile">📱 Móvil</option>
+                            <option value="globe">🌐 Web</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('configure-project-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Guardar cambios
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast">
+        <div class="toast-content">
+            <span id="toast-message"></span>
+        </div>
+    </div>
+
+    <script src="js/app.js?v=2100"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!-- Kanban Board Page -->
+<div id="page-board" class="page">
+    <div class="page-header">
+        <div class="header-left">
+            <h2><i class="fas fa-columns"></i> Tablero Kanban</h2>
+            <select id="board-project-select" class="form-control" style="width: 250px;">
+                <option value="">Seleccionar Proyecto</option>
+            </select>
+        </div>
+        <button class="btn btn-primary" onclick="showModal('story-modal')">
+            <i class="fas fa-plus"></i> Nueva Historia
+        </button>
+    </div>
+    
+    <div class="kanban-board">
+        <div class="kanban-column" data-status="Backlog">
+            <div class="kanban-column-header">
+                <span class="column-title">Por hacer</span>
+                <span class="column-count" id="count-backlog">0</span>
+            </div>
+            <div class="kanban-column-content" id="column-backlog" ondrop="drop(event, 'Backlog')" ondragover="allowDrop(event)">
+            </div>
+        </div>
+        
+        <div class="kanban-column" data-status="InProgress">
+            <div class="kanban-column-header">
+                <span class="column-title">En curso</span>
+                <span class="column-count" id="count-in-progress">0</span>
+            </div>
+            <div class="kanban-column-content" id="column-in-progress" ondrop="drop(event, 'InProgress')" ondragover="allowDrop(event)">
+            </div>
+        </div>
+        
+        <div class="kanban-column" data-status="Done">
+            <div class="kanban-column-header">
+                <span class="column-title">Hecho</span>
+                <span class="column-count" id="count-done">0</span>
+            </div>
+            <div class="kanban-column-content" id="column-done" ondrop="drop(event, 'Done')" ondragover="allowDrop(event)">
+            </div>
+        </div>
+    </div>
+</div>

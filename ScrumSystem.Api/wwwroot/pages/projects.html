@@ -1,0 +1,33 @@
+<!-- Projects Page -->
+<div id="page-projects" class="page">
+    <div class="page-header">
+        <div class="header-left">
+            <h2><i class="fas fa-folder-open"></i> Proyectos</h2>
+            <div class="header-actions">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="project-search" placeholder="Buscar proyectos...">
+                </div>
+            </div>
+        </div>
+        <button class="btn btn-primary" onclick="showModal('project-modal')">
+            <i class="fas fa-plus"></i> Nuevo Proyecto
+        </button>
+    </div>
+    
+    <div class="projects-toolbar">
+        <div class="view-options">
+            <button class="btn btn-icon active" title="Grid"><i class="fas fa-th-large"></i></button>
+            <button class="btn btn-icon" title="Lista"><i class="fas fa-list"></i></button>
+        </div>
+        <div class="filter-options">
+            <select class="form-control" id="project-filter">
+                <option value="all">Todos</option>
+                <option value="active">Activos</option>
+                <option value="archived">Archivados</option>
+            </select>
+        </div>
+    </div>
+    
+    <div class="projects-grid" id="projects-list"></div>
+</div>

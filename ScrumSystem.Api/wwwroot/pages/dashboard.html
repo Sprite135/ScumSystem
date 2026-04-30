@@ -1,0 +1,64 @@
+<!-- Dashboard Page -->
+<div id="page-dashboard" class="page active">
+    <div class="page-header">
+        <div class="header-left">
+            <h2><i class="fas fa-tachometer-alt"></i> Dashboard</h2>
+            <select id="dashboard-project-select" class="form-control" style="width: 250px;">
+                <option value="">Seleccionar Proyecto</option>
+            </select>
+        </div>
+        <button class="btn btn-primary" onclick="showModal('story-modal')">
+            <i class="fas fa-plus"></i> Nueva Historia
+        </button>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <i class="fas fa-folder"></i>
+            <div class="stat-value" id="stat-projects">0</div>
+            <div class="stat-label">Proyectos</div>
+        </div>
+        <div class="stat-card">
+            <i class="fas fa-book"></i>
+            <div class="stat-value" id="stat-stories">0</div>
+            <div class="stat-label">Historias</div>
+        </div>
+        <div class="stat-card">
+            <i class="fas fa-star"></i>
+            <div class="stat-value" id="stat-points">0</div>
+            <div class="stat-label">Story Points</div>
+        </div>
+        <div class="stat-card">
+            <i class="fas fa-check-circle"></i>
+            <div class="stat-value" id="stat-done">0</div>
+            <div class="stat-label">Completadas</div>
+        </div>
+    </div>
+    
+    <div class="dashboard-content">
+        <div class="dashboard-stories">
+            <div class="section-header">
+                <h3><i class="fas fa-list-alt"></i> Backlog</h3>
+                <div class="view-toggle">
+                    <button class="btn btn-icon active" title="Lista"><i class="fas fa-list"></i></button>
+                    <button class="btn btn-icon" title="Tablero"><i class="fas fa-columns"></i></button>
+                </div>
+            </div>
+            <div class="backlog-list" id="dashboard-backlog-list"></div>
+        </div>
+        
+        <div class="dashboard-charts">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3><i class="fas fa-chart-line"></i> Burndown Chart</h3>
+                    <select id="burndown-sprint-select" class="form-control">
+                        <option value="">Seleccionar Sprint</option>
+                    </select>
+                </div>
+                <div class="chart-container">
+                    <canvas id="burndown-chart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

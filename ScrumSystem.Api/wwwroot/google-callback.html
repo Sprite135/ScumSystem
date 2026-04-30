@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Google Sign In</title>
+</head>
+<body>
+    <script>
+        // Parse the URL hash to get the id_token
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        const credential = params.get('id_token');
+        
+        if (credential) {
+            // Send the credential back to the parent window
+            window.opener.postMessage({
+                type: 'google-signin',
+                credential: credential
+            }, window.location.origin);
+        }
+        
+        // Close this window
+        window.close();
+    </script>
+</body>
+</html>

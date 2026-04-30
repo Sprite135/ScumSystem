@@ -1,0 +1,79 @@
+# .NET Core / .NET 5+ build outputs
+bin/
+obj/
+out/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+*.sln.docstates
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+
+# Build results
+BuildOutput/
+*.exe
+*.dll
+*.pdb
+*.cache
+*.ilk
+*.meta
+*.obj
+*.pch
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*.log
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+
+# NuGet
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+
+# Entity Framework
+*.mdf
+*.ldf
+*.ndf
+
+# ASP.NET
+wwwroot/lib/
+node_modules/
+dist/
+
+# Local environment
+.env
+.env.local
+.env.*.local
+appsettings.Development.json
+appsettings.Production.json
+appsettings.Staging.json
+
+# Test Results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# Publish
+publish/
+*.Publish.xml
+
+# Misc
+.DS_Store
+Thumbs.db
+desktop.ini

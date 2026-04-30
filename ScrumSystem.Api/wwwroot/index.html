@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scrum System - Gestión Ágil</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+</head>
+<body>
+    <!-- HOME / Landing Page -->
+    <div class="home-screen">
+        <!-- Animated Background -->
+        <div class="home-bg">
+            <div class="orb orb-1"></div>
+            <div class="orb orb-2"></div>
+            <div class="orb orb-3"></div>
+            <div class="stars"></div>
+        </div>
+        
+        <!-- Navigation -->
+        <nav class="home-nav">
+            <div class="nav-brand">
+                <i class="fas fa-users-cog"></i>
+                <span>Scrum<span class="accent">System</span></span>
+            </div>
+            <div class="nav-links">
+                <a href="#features">Características</a>
+                <a href="#pricing">Precios</a>
+                <a href="#about">Nosotros</a>
+            </div>
+            <div class="nav-buttons">
+                <a href="login.html" class="btn-nav-secondary">
+                    <i class="fas fa-sign-in-alt"></i> Iniciar Sesión
+                </a>
+                <a href="register.html" class="btn-nav-primary">
+                    <i class="fas fa-user-plus"></i> Registrarse
+                </a>
+            </div>
+        </nav>
+        
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="hero-content">
+                <div class="hero-badge">
+                    <i class="fas fa-sparkles"></i> Versión 2.0 Disponible
+                </div>
+                <h1 class="hero-title">
+                    Gestiona tus proyectos<br>
+                    con metodología <span class="gradient-text">Scrum</span>
+                </h1>
+                <p class="hero-subtitle">
+                    La plataforma definitiva para equipos ágiles. Planifica sprints, 
+                    gestiona backlogs y visualiza el progreso en tiempo real.
+                </p>
+                <div class="hero-buttons">
+                    <a href="login.html" class="btn-hero-primary">
+                        <span>Comenzar Gratis</span>
+                        <i class="fas fa-arrow-right"></i>
+                    </a>
+                    <a href="login.html" class="btn-hero-secondary">
+                        <i class="fas fa-play"></i> Ver Demo
+                    </a>
+                </div>
+                <div class="hero-stats">
+                    <div class="stat">
+                        <strong>10K+</strong>
+                        <span>Equipos activos</span>
+                    </div>
+                    <div class="stat">
+                        <strong>98%</strong>
+                        <span>Satisfacción</span>
+                    </div>
+                    <div class="stat">
+                        <strong>50M+</strong>
+                        <span>Tareas completadas</span>
+                    </div>
+                </div>
+            </div>
+            <div class="hero-visual">
+                <div class="dashboard-stack roulette-stack">
+                    <!-- Card 3 (Third layer) - Team Tasks -->
+                    <div class="dashboard-preview-third">
+                        <div class="preview-header">
+                            <div class="dots">
+                                <span></span><span></span><span></span>
+                            </div>
+                            <span class="preview-title">Team Tasks</span>
+                            <div class="preview-actions">
+                                <i class="fas fa-bell"></i>
+                                <i class="fas fa-user-circle"></i>
+                            </div>
+                        </div>
+                        <div class="preview-main">
+                            <div class="preview-sidebar">
+                                <div class="sidebar-item active"><i class="fas fa-user"></i></div>
+                                <div class="sidebar-item"><i class="fas fa-user-friends"></i></div>
+                                <div class="sidebar-item"><i class="fas fa-users-cog"></i></div>
+                                <div class="sidebar-item"><i class="fas fa-tasks"></i></div>
+                            </div>
+                            <div class="preview-content">
+                                <div class="preview-stats">
+                                    <div class="mini-stat">
+                                        <span class="mini-stat-value">8</span>
+                                        <span class="mini-stat-label">Members</span>
+                                    </div>
+                                    <div class="mini-stat">
+                                        <span class="mini-stat-value">32</span>
+                                        <span class="mini-stat-label">Assigned</span>
+                                    </div>
+                                    <div class="mini-stat">
+                                        <span class="mini-stat-value">18</span>
+                                        <span class="mini-stat-label">Done</span>
+                                    </div>
+                                </div>
+                                <div class="preview-board team-board">
+                                    <div class="preview-column">
+                                        <h4>Assigned</h4>
+                                        <div class="preview-card">
+                                            <div class="card-dot"></div>
+                                            <div class="card-line"></div>
+                                            <div class="card-line short"></div>
+                                        </div>
+                                        <div class="preview-card">
+                                            <div class="card-dot"></div>
+                                            <div class="card-line"></div>
+                                        </div>
+                                        <div class="preview-card">
+                                            <div class="card-dot"></div>
+                                            <div class="card-line"></div>
+                                            <div class="card-line short"></div>
+                                        </div>
+                                    </div>
+                                    <div class="preview-column">
+                                        <h4>In Review</h4>
+                                        <div class="preview-card active">
+                                            <div class="card-dot active"></div>
+                                            <div class="card-line"></div>
+                                            <div class="card-progress">
+                                                <div class="progress-bar"></div>
+                                            </div>
+                                        </div>
+                                        <div class="preview-card active">
+                                            <div class="card-dot active"></div>
+                                            <div class="card-line"></div>
+                                        </div>
+                                    </div>
+                                    <div class="preview-column">
+                                        <h4>Completed</h4>
+                                        <div class="preview-card done">
+                                            <div class="card-dot done"></div>
+                                            <div class="card-line"></div>
+                                            <div class="card-check"><i class="fas fa-check"></i></div>
+                                        </div>
+                                        <div class="preview-card done">
+                                            <div class="card-dot done"></div>
+                                            <div class="card-line"></div>
+                                            <div class="card-check"><i class="fas fa-check"></i></div>
+                                        </div>
+                                        <div class="preview-card done">
+                                            <div class="card-dot done"></div>
+                                            <div class="card-line"></div>
+                                            <div class="card-check"><i class="fas fa-check"></i></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="typing-demo">
+                            <div class="typing-header">
+                                <i class="fas fa-terminal"></i>
+                                <span>Team Activity</span>
+                            </div>
+                            <div class="typing-content">
+                                <span class="typing-text"></span>
+                                <span class="typing-cursor">|</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Card 2 (Second layer) - Sprint Analytics -->
+                    <div class="dashboard-preview-back">
+                        <div class="preview-header">
+                            <div class="dots">
+                                <span></span><span></span><span></span>
+                            </div>
+                            <span class="preview-title">Sprint Analytics</span>
+                            <div class="preview-actions">
+                                <i class="fas fa-bell"></i>
+                                <i class="fas fa-user-circle"></i>
+                            </div>
+                        </div>
+                        <div class="preview-main">
+                            <div class="preview-sidebar">
+                                <div class="sidebar-item"><i class="fas fa-chart-bar"></i></div>
+                                <div class="sidebar-item active"><i class="fas fa-chart-pie"></i></div>
+                                <div class="sidebar-item"><i class="fas fa-chart-line"></i></div>
+                                <div class="sidebar-item"><i class="fas fa-tachometer-alt"></i></div>
+                            </div>
+                            <div class="preview-content">
+                                <div class="preview-stats">
+                                    <div class="mini-stat">
+                                        <span class="mini-stat-value">89%</span>
+                                        <span class="mini-stat-label">Velocity</span>
+                                    </div>
+                                    <div class="mini-stat">
+                                        <span class="mini-stat-value">24</span>
+                                        <span class="mini-stat-label">Stories</span>
+                                    </div>
+                                    <div class="mini-stat">
+                                        <span class="mini-stat-value">12</span>
+                                        <span class="mini-stat-label">Bugs</span>
+                                    </div>
+                                </div>
+                                <div class="preview-board analytics-board">
+                                    <div class="preview-column">
+                                        <h4>Completed</h4>
+                                        <div class="preview-card done">
+                                            <div class="card-dot done"></div>
+                                            <div class="card-line"></div>
+                                            <div class="card-check"><i class="fas fa-check"></i></div>
+                                        </div>
+                                        <div class="preview-card done">
+                                            <div class="card-dot done"></div>
+                                            <div class="card-line"></div>
+                                            <div class="card-check"><i class="fas fa-check"></i></div>
+                                        </div>
+                                    </div>
+                                    <div class="preview-column">
+                                        <h4>In Progress</h4>
+                                        <div class="preview-card active">
+                                            <div class="card-dot active"></div>
+                                            <div class="card-line"></div>
+                                            <div class="card-line short"></div>
+                                            <div class="card-progress">
+                                                <div class="progress-bar"></div>
+                                            </div>
+                                        </div>
+                                        <div class="preview-card active">
+                                            <div class="card-dot active"></div>
+                                            <div class="card-line"></div>
+                                        </div>
+                                    </div>
+                                    <div class="preview-column">
+                                        <h4>Pending</h4>
+                                        <div class="preview-card">
+                                            <div class="card-dot"></div>
+                                            <div class="card-line"></div>
+                                            <div class="card-line short"></div>
+                                        </div>
+                                        <div class="preview-card">
+                                            <div class="card-dot"></div>
+                                            <div class="card-line"></div>
+                                        </div>
+                                        <div class="preview-card">
+                                            <div class="card-dot"></div>
+                                            <div class="card-line"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="typing-demo">
+                            <div class="typing-header">
+                                <i class="fas fa-terminal"></i>
+                                <span>Sprint Metrics</span>
+                            </div>
+                            <div class="typing-content">
+                                <span class="typing-text"></span>
+                                <span class="typing-cursor">|</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Card 1 (First layer) -->
+                    <div class="dashboard-preview">
+                        <div class="preview-header">
+                        <div class="dots">
+                            <span></span><span></span><span></span>
+                        </div>
+                        <span class="preview-title">Scrum System</span>
+                        <div class="preview-actions">
+                            <i class="fas fa-bell"></i>
+                            <i class="fas fa-user-circle"></i>
+                        </div>
+                    </div>
+                    <div class="preview-main">
+                        <div class="preview-sidebar">
+                            <div class="sidebar-item active"><i class="fas fa-tachometer-alt"></i></div>
+                            <div class="sidebar-item"><i class="fas fa-folder"></i></div>
+                            <div class="sidebar-item"><i class="fas fa-list"></i></div>
+                            <div class="sidebar-item"><i class="fas fa-columns"></i></div>
+                        </div>
+                        <div class="preview-content">
+                            <div class="preview-stats">
+                                <div class="mini-stat">
+                                    <span class="mini-stat-value">12</span>
+                                    <span class="mini-stat-label">Proyectos</span>
+                                </div>
+                                <div class="mini-stat">
+                                    <span class="mini-stat-value">48</span>
+                                    <span class="mini-stat-label">Sprints</span>
+                                </div>
+                                <div class="mini-stat">
+                                    <span class="mini-stat-value">156</span>
+                                    <span class="mini-stat-label">Tareas</span>
+                                </div>
+                            </div>
+                            <div class="preview-board">
+                                <div class="preview-column">
+                                    <h4>Por Hacer</h4>
+                                    <div class="preview-card">
+                                        <div class="card-dot"></div>
+                                        <div class="card-line"></div>
+                                        <div class="card-line short"></div>
+                                    </div>
+                                    <div class="preview-card">
+                                        <div class="card-dot"></div>
+                                        <div class="card-line"></div>
+                                    </div>
+                                    <div class="preview-card">
+                                        <div class="card-dot"></div>
+                                        <div class="card-line"></div>
+                                        <div class="card-line short"></div>
+                                    </div>
+                                </div>
+                                <div class="preview-column">
+                                    <h4>En Progreso</h4>
+                                    <div class="preview-card active">
+                                        <div class="card-dot active"></div>
+                                        <div class="card-line"></div>
+                                        <div class="card-line short"></div>
+                                        <div class="card-progress">
+                                            <div class="progress-bar"></div>
+                                        </div>
+                                    </div>
+                                    <div class="preview-card active">
+                                        <div class="card-dot active"></div>
+                                        <div class="card-line"></div>
+                                    </div>
+                                </div>
+                                <div class="preview-column">
+                                    <h4>Completado</h4>
+                                    <div class="preview-card done">
+                                        <div class="card-dot done"></div>
+                                        <div class="card-line"></div>
+                                        <div class="card-check"><i class="fas fa-check"></i></div>
+                                    </div>
+                                    <div class="preview-card done">
+                                        <div class="card-dot done"></div>
+                                        <div class="card-line"></div>
+                                        <div class="card-check"><i class="fas fa-check"></i></div>
+                                    </div>
+                                    <div class="preview-card done">
+                                        <div class="card-dot done"></div>
+                                        <div class="card-line"></div>
+                                        <div class="card-check"><i class="fas fa-check"></i></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="typing-demo">
+                        <div class="typing-header">
+                            <i class="fas fa-terminal"></i>
+                            <span>Quick Actions</span>
+                        </div>
+                        <div class="typing-content">
+                            <span class="typing-text"></span>
+                            <span class="typing-cursor">|</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Features Section -->
+        <section id="features" class="features-section">
+            <h2 class="section-title">Todo lo que necesitas para el éxito ágil</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon purple">
+                        <i class="fas fa-columns"></i>
+                    </div>
+                    <h3>Tableros Kanban</h3>
+                    <p>Visualiza el flujo de trabajo con tableros personalizables y drag-and-drop.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon pink">
+                        <i class="fas fa-running"></i>
+                    </div>
+                    <h3>Gestión de Sprints</h3>
+                    <p>Planifica, ejecuta y revisa sprints con herramientas integradas.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon blue">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <h3>Reportes en Tiempo Real</h3>
+                    <p>Burndown charts, velocity tracking y métricas de equipo.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon green">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <h3>Roles Scrum</h3>
+                    <p>Soporte completo para Product Owner, Scrum Master y Developers.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon orange">
+                        <i class="fas fa-clipboard-check"></i>
+                    </div>
+                    <h3>Daily Standup</h3>
+                    <p>Registra y sigue las reuniones diarias del equipo.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon cyan">
+                        <i class="fas fa-shield-alt"></i>
+                    </div>
+                    <h3>Seguridad Empresarial</h3>
+                    <p>Autenticación segura y control de acceso basado en roles.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- How It Works Section -->
+        <section id="how-it-works" class="how-it-works-section">
+            <h2 class="section-title">¿Cómo funciona?</h2>
+            <div class="steps-container">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <h3>Crea tu Proyecto</h3>
+                    <p>Define tu proyecto, asigna roles y configura tu equipo en minutos.</p>
+                </div>
+                <div class="step-connector"></div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <h3>Planifica Sprints</h3>
+                    <p>Organiza tu backlog, prioriza historias y crea sprints con metas claras.</p>
+                </div>
+                <div class="step-connector"></div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <h3>Ejecuta y Seguimiento</h3>
+                    <p>Usa el tablero Kanban, registra standups y visualiza el progreso.</p>
+                </div>
+                <div class="step-connector"></div>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <h3>Mejora Continua</h3>
+                    <p>Analiza métricas, realiza retros y optimiza tu proceso.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Testimonials Section -->
+        <section id="testimonials" class="testimonials-section">
+            <h2 class="section-title">Lo que dicen nuestros usuarios</h2>
+            <div class="testimonials-grid">
+                <div class="testimonial-card">
+                    <div class="testimonial-content">
+                        <p>"Scrum System transformó nuestra forma de trabajar. La visibilidad que tenemos ahora es increíble."</p>
+                    </div>
+                    <div class="testimonial-author">
+                        <div class="author-avatar">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <div class="author-info">
+                            <strong>María González</strong>
+                            <span>Product Owner, TechCorp</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="testimonial-card">
+                    <div class="testimonial-content">
+                        <p>"La interfaz es intuitiva y el soporte para Daily Standups nos ahorró horas de reuniones."</p>
+                    </div>
+                    <div class="testimonial-author">
+                        <div class="author-avatar">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <div class="author-info">
+                            <strong>Carlos Rodríguez</strong>
+                            <span>Scrum Master, InnovateLab</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="testimonial-card">
+                    <div class="testimonial-content">
+                        <p>"Los reportes en tiempo real nos ayudan a tomar decisiones basadas en datos reales."</p>
+                    </div>
+                    <div class="testimonial-author">
+                        <div class="author-avatar">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <div class="author-info">
+                            <strong>Ana Martínez</strong>
+                            <span>Team Lead, DevStudio</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Pricing Section -->
+        <section id="pricing" class="pricing-section">
+            <h2 class="section-title">Planes flexibles para tu equipo</h2>
+            <div class="pricing-grid">
+                <div class="pricing-card">
+                    <div class="pricing-header">
+                        <h3>Starter</h3>
+                        <div class="price">
+                            <span class="currency">$</span>
+                            <span class="amount">0</span>
+                            <span class="period">/mes</span>
+                        </div>
+                        <p class="pricing-desc">Para equipos pequeños</p>
+                    </div>
+                    <ul class="pricing-features">
+                        <li><i class="fas fa-check"></i> Hasta 5 miembros</li>
+                        <li><i class="fas fa-check"></i> 3 proyectos activos</li>
+                        <li><i class="fas fa-check"></i> Tableros Kanban</li>
+                        <li><i class="fas fa-check"></i> Daily Standup básico</li>
+                        <li class="disabled"><i class="fas fa-times"></i> Reportes avanzados</li>
+                    </ul>
+                    <a href="login.html" class="btn-pricing">Comenzar Gratis</a>
+                </div>
+                <div class="pricing-card featured">
+                    <div class="pricing-badge">Popular</div>
+                    <div class="pricing-header">
+                        <h3>Professional</h3>
+                        <div class="price">
+                            <span class="currency">$</span>
+                            <span class="amount">29</span>
+                            <span class="period">/mes</span>
+                        </div>
+                        <p class="pricing-desc">Para equipos en crecimiento</p>
+                    </div>
+                    <ul class="pricing-features">
+                        <li><i class="fas fa-check"></i> Hasta 25 miembros</li>
+                        <li><i class="fas fa-check"></i> Proyectos ilimitados</li>
+                        <li><i class="fas fa-check"></i> Tableros Kanban</li>
+                        <li><i class="fas fa-check"></i> Daily Standup completo</li>
+                        <li><i class="fas fa-check"></i> Reportes avanzados</li>
+                    </ul>
+                    <a href="login.html" class="btn-pricing primary">Prueba Gratis 14 días</a>
+                </div>
+                <div class="pricing-card">
+                    <div class="pricing-header">
+                        <h3>Enterprise</h3>
+                        <div class="price">
+                            <span class="currency">$</span>
+                            <span class="amount">99</span>
+                            <span class="period">/mes</span>
+                        </div>
+                        <p class="pricing-desc">Para grandes organizaciones</p>
+                    </div>
+                    <ul class="pricing-features">
+                        <li><i class="fas fa-check"></i> Miembros ilimitados</li>
+                        <li><i class="fas fa-check"></i> Proyectos ilimitados</li>
+                        <li><i class="fas fa-check"></i> Todo lo de Professional</li>
+                        <li><i class="fas fa-check"></i> SSO & API personalizada</li>
+                        <li><i class="fas fa-check"></i> Soporte dedicado 24/7</li>
+                    </ul>
+                    <a href="login.html" class="btn-pricing">Contactar Ventas</a>
+                </div>
+            </div>
+        </section>
+
+        <!-- CTA Section -->
+        <section class="cta-section">
+            <div class="cta-content">
+                <h2>¿Listo para transformar tu equipo?</h2>
+                <p>Únete a miles de equipos que ya están usando Scrum System</p>
+                <a href="login.html" class="btn-cta">
+                    <span>Comenzar Ahora</span>
+                    <i class="fas fa-arrow-right"></i>
+                </a>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <div class="footer-brand">
+                        <i class="fas fa-users-cog"></i>
+                        <span>Scrum<span class="accent">System</span></span>
+                    </div>
+                    <p>La plataforma definitiva para gestión ágil de proyectos.</p>
+                    <div class="social-links">
+                        <a href="#"><i class="fab fa-twitter"></i></a>
+                        <a href="#"><i class="fab fa-linkedin"></i></a>
+                        <a href="#"><i class="fab fa-github"></i></a>
+                        <a href="#"><i class="fab fa-discord"></i></a>
+                    </div>
+                </div>
+                <div class="footer-section">
+                    <h4>Producto</h4>
+                    <ul>
+                        <li><a href="#features">Características</a></li>
+                        <li><a href="#pricing">Precios</a></li>
+                        <li><a href="#">Integraciones</a></li>
+                        <li><a href="#">API</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>Recursos</h4>
+                    <ul>
+                        <li><a href="#">Documentación</a></li>
+                        <li><a href="#">Guías</a></li>
+                        <li><a href="#">Blog</a></li>
+                        <li><a href="#">Webinars</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>Compañía</h4>
+                    <ul>
+                        <li><a href="#about">Nosotros</a></li>
+                        <li><a href="#">Carreras</a></li>
+                        <li><a href="#">Contacto</a></li>
+                        <li><a href="#">Soporte</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 Scrum System. Todos los derechos reservados.</p>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // Typing effect for terminal demo
+        const commands = [
+            '> Creating new sprint...',
+            '> Sprint "Sprint 24" created',
+            '> Adding team members...',
+            '> 5 members added',
+            '> Loading backlog items...',
+            '> 12 stories loaded',
+            '> Starting daily standup...',
+            '> Standup in progress ✓'
+        ];
+
+        let commandIndex = 0;
+        let charIndex = 0;
+        let isDeleting = false;
+        const typingElement = document.querySelector('.typing-text');
+
+        function typeCommand() {
+            if (!typingElement) return;
+
+            const currentCommand = commands[commandIndex];
+            
+            if (isDeleting) {
+                typingElement.textContent = currentCommand.substring(0, charIndex - 1);
+                charIndex--;
+            } else {
+                typingElement.textContent = currentCommand.substring(0, charIndex + 1);
+                charIndex++;
+            }
+
+            let typeSpeed = isDeleting ? 30 : 50;
+
+            if (!isDeleting && charIndex === currentCommand.length) {
+                typeSpeed = 1500;
+                isDeleting = true;
+            } else if (isDeleting && charIndex === 0) {
+                isDeleting = false;
+                commandIndex = (commandIndex + 1) % commands.length;
+                typeSpeed = 500;
+            }
+
+            setTimeout(typeCommand, typeSpeed);
+        }
+
+        // Start typing effect when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(typeCommand, 1000);
+        });
+    </script>
+</body>
+</html>

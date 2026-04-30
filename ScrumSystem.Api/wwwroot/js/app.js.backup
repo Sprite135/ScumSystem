@@ -1,0 +1,1329 @@
+// API URL - Change this to match your backend
+const API_URL = '';
+
+// Global state
+let currentUser = null;
+let currentProject = null;
+let currentSprint = null;
+let users = [];
+let projects = [];
+let sprints = [];
+
+// Initialize app
+document.addEventListener('DOMContentLoaded', () => {
+    checkAuth();
+    setupEventListeners();
+});
+
+// Check authentication
+function checkAuth() {
+    const user = localStorage.getItem('scrumUser');
+    if (user) {
+        currentUser = JSON.parse(user);
+        showMainApp();
+        loadPage('dashboard');
+    } else {
+        window.location.href = 'login.html';
+    }
+}
+
+// Dynamic page loader
+async function loadPage(pageName) {
+    console.log(`Loading page: ${pageName}`);
+    const mainContent = document.getElementById('main-content');
+    
+    if (!mainContent) {
+        console.error('main-content element not found');
+        return;
+    }
+    
+    try {
+        const url = `pages/${pageName}.html`;
+        console.log(`Fetching from: ${url}`);
+        
+        const response = await fetch(url);
+        console.log(`Response status: ${response.status}`);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to load page: ${response.status}`);
+        }
+        
+        const html = await response.text();
+        console.log(`HTML loaded, length: ${html.length}`);
+        
+        mainContent.innerHTML = html;
+        console.log('Page content updated');
+        
+        // Add active class to the loaded page
+        const pageElement = mainContent.querySelector('.page');
+        if (pageElement) {
+            pageElement.classList.add('active');
+        }
+        
+        // Initialize page-specific functionality
+        initPage(pageName);
+        
+    } catch (error) {
+        console.error('Error loading page:', error);
+        mainContent.innerHTML = `<div class="page active"><h2>Error</h2><p>No se pudo cargar la página: ${error.message}</p><p>URL: pages/${pageName}.html</p></div>`;
+    }
+}
+
+// Initialize page-specific functionality
+function initPage(pageName) {
+    console.log(`Initializing page: ${pageName}`);
+    
+    switch(pageName) {
+        case 'dashboard':
+            loadDashboard();
+            break;
+        case 'projects':
+            loadProjects();
+            break;
+        case 'backlog':
+            loadBacklog();
+            setupBacklogListener();
+            break;
+    }
+}
+
+// Setup event listeners
+function setupEventListeners() {
+    // Login form
+    document.getElementById('login-form')?.addEventListener('submit', handleLogin);
+    
+    // Logout button
+    document.getElementById('logout-btn')?.addEventListener('click', handleLogout);
+    
+    // Navigation
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            const page = item.dataset.page;
+            navigateTo(page);
+        });
+    });
+    
+    // Forms
+    document.getElementById('project-form')?.addEventListener('submit', handleCreateProject);
+    document.getElementById('story-form')?.addEventListener('submit', handleCreateStory);
+}
+
+// Login helper functions
+function togglePassword() {
+    const passwordInput = document.getElementById('login-password');
+    const toggleIcon = document.getElementById('toggle-icon');
+    
+    if (passwordInput.type === 'password') {
+        passwordInput.type = 'text';
+        toggleIcon.classList.remove('fa-eye');
+        toggleIcon.classList.add('fa-eye-slash');
+    } else {
+        passwordInput.type = 'password';
+        toggleIcon.classList.remove('fa-eye-slash');
+        toggleIcon.classList.add('fa-eye');
+    }
+}
+
+function fillDemo(email) {
+    document.getElementById('login-email').value = email;
+    document.getElementById('login-password').value = 'admin123';
+    document.getElementById('login-password').focus();
+}
+
+// Navigation between Home and Login
+function showLogin() {
+    document.getElementById('home-screen')?.classList.add('hidden');
+    document.getElementById('login-screen')?.classList.remove('hidden');
+}
+
+function showHome() {
+    document.getElementById('login-screen')?.classList.add('hidden');
+    document.getElementById('home-screen')?.classList.remove('hidden');
+}
+
+// Show/Hide screens
+function showLoginScreen() {
+    document.getElementById('home-screen')?.classList.add('hidden');
+    document.getElementById('login-screen')?.classList.remove('hidden');
+    document.getElementById('main-app')?.classList.add('hidden');
+}
+
+function showMainApp() {
+    document.getElementById('login-screen')?.classList.add('hidden');
+    document.getElementById('main-app')?.classList.remove('hidden');
+    
+    // Update user info
+    document.getElementById('user-name').textContent = currentUser?.name || 'Usuario';
+    document.getElementById('user-role').textContent = currentUser?.role || 'Rol';
+    
+    // Load initial data
+    loadDashboard();
+    loadUsers();
+    loadProjects();
+}
+
+// Navigation
+function navigateTo(page) {
+    console.log('Navigating to:', page);
+    
+    // Update active nav item
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.remove('active');
+        if (item.dataset.page === page) {
+            item.classList.add('active');
+        }
+    });
+    
+    // Load the page dynamically
+    loadPage(page);
+}
+
+// API Helpers
+async function apiRequest(url, options = {}) {
+    const response = await fetch(`${API_URL}${url}`, {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...options.headers
+        }
+    });
+    
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'Unknown error' }));
+        throw new Error(error.message || error.title || 'Request failed');
+    }
+    
+    return response.json();
+}
+
+// Auth functions
+async function handleLogin(e) {
+    e.preventDefault();
+    
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    
+    try {
+        const user = await apiRequest('/api/users/login', {
+            method: 'POST',
+            body: JSON.stringify({ email, password })
+        });
+        
+        currentUser = user;
+        localStorage.setItem('scrumUser', JSON.stringify(user));
+        showMainApp();
+        showToast('¡Bienvenido! ' + user.name);
+    } catch (error) {
+        showToast('Error: ' + error.message, 'error');
+    }
+}
+
+function handleLogout() {
+    currentUser = null;
+    localStorage.removeItem('scrumUser');
+    window.location.href = 'index.html';
+    showToast('Sesión cerrada');
+}
+
+// Alias for onclick handlers
+function logout() {
+    handleLogout();
+}
+
+// Dashboard
+async function loadDashboard() {
+    try {
+        const stats = await apiRequest('/api/dashboard/stats');
+        
+        document.getElementById('stat-projects').textContent = stats.totalProjects || 0;
+        document.getElementById('stat-sprints').textContent = stats.activeSprints || 0;
+        document.getElementById('stat-stories').textContent = stats.totalStories || 0;
+        document.getElementById('stat-tasks').textContent = stats.completedTasks || 0;
+        
+        // Load sprints for burndown chart
+        loadBurndownSprints();
+    } catch (error) {
+        console.error('Error loading dashboard:', error);
+    }
+}
+
+async function loadBurndownSprints() {
+    try {
+        const sprints = await apiRequest('/api/sprints');
+        const select = document.getElementById('burndown-sprint-select');
+        select.innerHTML = '<option value="">Seleccionar Sprint</option>';
+        sprints.forEach(sprint => {
+            select.innerHTML += `<option value="${sprint.id}">${sprint.name}</option>`;
+        });
+        
+        // Add change listener
+        select.onchange = (e) => {
+            if (e.target.value) {
+                loadBurndownChart(e.target.value);
+            }
+        };
+    } catch (error) {
+        console.error('Error loading sprints for burndown:', error);
+    }
+}
+
+let burndownChart = null;
+
+async function loadBurndownChart(sprintId) {
+    try {
+        const data = await apiRequest(`/api/sprints/${sprintId}/burndown`);
+        
+        const ctx = document.getElementById('burndown-chart').getContext('2d');
+        
+        if (burndownChart) {
+            burndownChart.destroy();
+        }
+        
+        burndownChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels,
+                datasets: [
+                    {
+                        label: 'Ideal',
+                        data: data.ideal,
+                        borderColor: 'rgba(139, 92, 246, 0.5)',
+                        borderDash: [5, 5],
+                        fill: false,
+                        tension: 0
+                    },
+                    {
+                        label: 'Actual',
+                        data: data.actual,
+                        borderColor: 'rgba(139, 92, 246, 1)',
+                        backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                        fill: true,
+                        tension: 0.3
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            color: '#ffffff'
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#ffffff'
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#ffffff'
+                        },
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error loading burndown chart:', error);
+        showToast('Error al cargar gráfico burndown', 'error');
+    }
+}
+
+// Users
+async function loadUsers() {
+    try {
+        users = await apiRequest('/api/users');
+        populateUserSelects();
+    } catch (error) {
+        console.error('Error loading users:', error);
+    }
+}
+
+function populateUserSelects() {
+    const poSelect = document.getElementById('project-po');
+    const smSelect = document.getElementById('project-sm');
+    
+    const pos = users.filter(u => u.role === 'ProductOwner');
+    const sms = users.filter(u => u.role === 'ScrumMaster');
+    
+    const createOption = (user) => `<option value="${user.id}">${user.name} (${user.email})</option>`;
+    
+    if (poSelect) {
+        poSelect.innerHTML = '<option value="">Seleccionar...</option>' + pos.map(createOption).join('');
+    }
+    if (smSelect) {
+        smSelect.innerHTML = '<option value="">Seleccionar...</option>' + sms.map(createOption).join('');
+    }
+}
+
+// Projects
+async function loadProjects() {
+    try {
+        projects = await apiRequest('/api/projects');
+        renderProjects();
+        populateProjectSelects();
+    } catch (error) {
+        console.error('Error loading projects:', error);
+    }
+}
+
+function renderProjects() {
+    const container = document.getElementById('projects-list');
+    if (!container) return;
+    
+    if (projects.length === 0) {
+        container.innerHTML = '<p class="text-center">No hay proyectos. Crea uno nuevo.</p>';
+        return;
+    }
+    
+    container.innerHTML = projects.map(project => `
+        <div class="project-card">
+            <div class="project-header">
+                <h4>${escapeHtml(project.name)}</h4>
+                <button class="btn btn-icon btn-danger" onclick="deleteProject('${project.id}')" title="Eliminar proyecto">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+            <p>${escapeHtml(project.description || 'Sin descripción')}</p>
+            <div class="project-meta">
+                <span><i class="fas fa-calendar"></i> ${new Date(project.createdAt).toLocaleDateString()}</span>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function deleteProject(projectId) {
+    if (!confirm('¿Estás seguro de que quieres eliminar este proyecto? Esta acción eliminará todos los sprints, historias y tareas asociados.')) {
+        return;
+    }
+    
+    try {
+        await apiRequest(`/api/projects/${projectId}`, {
+            method: 'DELETE'
+        });
+        
+        loadProjects();
+        showToast('Proyecto eliminado exitosamente');
+    } catch (error) {
+        showToast('Error al eliminar proyecto: ' + error.message, 'error');
+    }
+}
+
+function populateProjectSelects() {
+    const options = projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+    
+    ['sprint-project', 'story-project'].forEach(id => {
+        const select = document.getElementById(id);
+        if (select) {
+            select.innerHTML = '<option value="">Seleccionar...</option>' + options;
+        }
+    });
+}
+
+async function handleCreateProject(e) {
+    e.preventDefault();
+    
+    const data = {
+        name: document.getElementById('project-name').value,
+        description: document.getElementById('project-description').value,
+        productOwnerId: document.getElementById('project-po').value || null,
+        scrumMasterId: document.getElementById('project-sm').value || null
+    };
+    
+    try {
+        await apiRequest('/api/projects', {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+        
+        hideModal('project-modal');
+        e.target.reset();
+        loadProjects();
+        showToast('Proyecto creado exitosamente');
+    } catch (error) {
+        showToast('Error: ' + error.message, 'error');
+    }
+}
+
+// Backlog
+async function loadBacklog() {
+    console.log('Loading backlog...');
+    
+    // First ensure we have projects loaded
+    if (!projects || projects.length === 0) {
+        console.log('No projects, loading first...');
+        await loadProjects();
+    }
+    
+    // Populate project selector
+    const projectSelect = document.getElementById('backlog-project-select');
+    if (projectSelect && projects.length > 0) {
+        const currentValue = projectSelect.value;
+        projectSelect.innerHTML = '<option value="">Seleccionar Proyecto</option>' + 
+            projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+        // Restore selection if valid
+        if (currentValue && projects.find(p => p.id === currentValue)) {
+            projectSelect.value = currentValue;
+        }
+    }
+    
+    // Get selected project
+    let projectId = document.getElementById('backlog-project-select')?.value;
+    if (!projectId && projects.length > 0) {
+        projectId = projects[0].id;
+        // Update selector to show first project
+        if (projectSelect) {
+            projectSelect.value = projectId;
+        }
+        console.log('Using first project:', projectId);
+    }
+    
+    if (!projectId) {
+        console.log('No projectId available');
+        const container = document.getElementById('backlog-list');
+        if (container) {
+            container.innerHTML = '<p class="empty-state">Crea un proyecto primero para ver el backlog.</p>';
+        }
+        return;
+    }
+    
+    try {
+        console.log('Fetching stories for project:', projectId);
+        const stories = await apiRequest(`/api/stories/project/${projectId}/backlog`);
+        console.log('Stories loaded:', stories.length);
+        renderBacklog(stories);
+    } catch (error) {
+        console.error('Error loading backlog:', error);
+        const container = document.getElementById('backlog-list');
+        if (container) {
+            container.innerHTML = `<p class="error-state">Error al cargar historias: ${error.message}</p>`;
+        }
+    }
+}
+
+function setupBacklogListener() {
+    const projectSelect = document.getElementById('backlog-project-select');
+    if (projectSelect) {
+        projectSelect.addEventListener('change', () => {
+            loadBacklog();
+        });
+    }
+}
+
+function renderBacklog(stories) {
+    console.log('renderBacklog called with', stories.length, 'stories');
+    const backlogList = document.getElementById('backlog-list');
+    console.log('backlog-list element:', backlogList);
+    if (!backlogList) {
+        console.error('ERROR: backlog-list element not found in DOM!');
+        return;
+    }
+
+    if (stories.length === 0) {
+        console.log('No stories to render, showing empty state');
+        backlogList.innerHTML = '<div class="empty-state"><i class="fas fa-list"></i><p>No hay historias en el backlog</p></div>';
+        return;
+    }
+
+    console.log('Rendering', stories.length, 'stories...');
+    const html = stories.map(story => {
+        console.log('Rendering story:', story.id, story.title);
+        return `
+        <div class="backlog-item priority-${story.priority}">
+            <div class="backlog-item-content">
+                <div class="backlog-item-header">
+                    <span class="story-id">#${story.id.substring(0, 8)}</span>
+                    <span class="badge priority">${getPriorityText(story.priority)}</span>
+                    <div class="story-actions">
+                        <button class="btn btn-icon btn-small" onclick="editStory('${story.id}')" title="Editar">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-icon btn-small text-danger" onclick="deleteStory('${story.id}')" title="Eliminar">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <h4>${escapeHtml(story.title)}</h4>
+                <p>${escapeHtml(story.description || 'Sin descripción')}</p>
+                <div class="backlog-item-footer">
+                    <div class="story-points">
+                        <i class="fas fa-star"></i> ${story.storyPoints || 0} pts
+                    </div>
+                    <div class="task-count">
+                        <i class="fas fa-tasks"></i> ${story.taskCount || 0} tareas
+                    </div>
+                </div>
+            </div>
+        </div>
+    `}).join('');
+    
+    console.log('Generated HTML length:', html.length);
+    backlogList.innerHTML = html;
+    console.log('HTML inserted into backlog-list');
+}
+
+// Sprint Backlog
+function setupSprintBacklogListener() {
+    document.getElementById('sprint-backlog-select')?.addEventListener('change', (e) => {
+        if (e.target.value) {
+            loadSprintBacklog(e.target.value);
+        } else {
+            document.getElementById('sprint-backlog-list').innerHTML = '<p class="text-center">Selecciona un sprint para ver sus historias.</p>';
+        }
+    });
+}
+
+async function loadSprintBacklog(sprintId) {
+    if (!sprintId) return;
+    
+    try {
+        const stories = await apiRequest(`/api/stories/sprint/${sprintId}`);
+        renderSprintBacklog(stories);
+    } catch (error) {
+        console.error('Error loading sprint backlog:', error);
+        showToast('Error al cargar sprint backlog', 'error');
+    }
+}
+
+async function editStory(id) {
+    try {
+        const story = await apiRequest(`/api/stories/${id}`);
+        
+        // Populate modal
+        const titleElem = document.getElementById('story-modal-title');
+        if (titleElem) titleElem.textContent = 'Editar Historia';
+        
+        document.getElementById('story-id').value = story.id;
+        document.getElementById('story-project').value = story.projectId;
+        document.getElementById('story-sprint').value = story.sprintId || '';
+        document.getElementById('story-title').value = story.title;
+        document.getElementById('story-description').value = story.description || '';
+        document.getElementById('story-criteria').value = story.acceptanceCriteria || '';
+        document.getElementById('story-points').value = story.storyPoints || '';
+        document.getElementById('story-priority').value = story.priority;
+        
+        showModal('story-modal');
+    } catch (error) {
+        showToast('Error al cargar la historia: ' + error.message, 'error');
+    }
+}
+
+async function handleCreateStory(event) {
+    event.preventDefault();
+    
+    const id = document.getElementById('story-id').value;
+    const isEdit = !!id;
+    
+    const data = {
+        projectId: document.getElementById('story-project').value,
+        sprintId: document.getElementById('story-sprint').value || null,
+        title: document.getElementById('story-title').value,
+        description: document.getElementById('story-description').value,
+        acceptanceCriteria: document.getElementById('story-criteria').value,
+        storyPoints: parseInt(document.getElementById('story-points').value) || 0,
+        priority: parseInt(document.getElementById('story-priority').value)
+    };
+
+    try {
+        const url = isEdit ? `/api/stories/${id}` : '/api/stories';
+        const method = isEdit ? 'PUT' : 'POST';
+        
+        await apiRequest(url, {
+            method: method,
+            body: JSON.stringify(data)
+        });
+
+        showToast(isEdit ? 'Historia actualizada' : 'Historia creada exitosamente');
+        hideModal('story-modal');
+        
+        // Reset form
+        document.getElementById('story-form').reset();
+        document.getElementById('story-id').value = '';
+        
+        // Reload backlog with a small delay to ensure DB update
+        setTimeout(() => {
+            loadBacklog();
+        }, 300);
+    } catch (error) {
+        showToast('Error al procesar historia: ' + error.message, 'error');
+    }
+}
+
+// ...
+// Sprints
+async function loadSprints() {
+    console.log('Loading sprints...');
+    console.log('Projects loaded:', projects);
+    
+    // First ensure we have projects loaded
+    if (!projects || projects.length === 0) {
+        console.log('No projects, trying to load projects first...');
+        await loadProjects();
+    }
+    
+    const projectId = projects[0]?.id;
+    console.log('Using projectId:', projectId);
+    
+    if (!projectId) {
+        console.log('No projectId available');
+        const container = document.getElementById('sprints-list');
+        if (container) {
+            container.innerHTML = '<p class="empty-state">Crea un proyecto primero para poder agregar sprints.</p>';
+        }
+        return;
+    }
+    
+    try {
+        console.log('Fetching sprints for project:', projectId);
+        sprints = await apiRequest(`/api/sprints/project/${projectId}`);
+        console.log('Sprints loaded:', sprints);
+        renderSprints();
+        populateSprintSelects();
+    } catch (error) {
+        console.error('Error loading sprints:', error);
+        const container = document.getElementById('sprints-list');
+        if (container) {
+            container.innerHTML = `<p class="error-state">Error al cargar sprints: ${error.message}</p>`;
+        }
+    }
+}
+
+function renderSprints() {
+    const container = document.getElementById('sprints-list');
+    if (!container) return;
+    
+    if (sprints.length === 0) {
+        container.innerHTML = '<p>No hay sprints. Crea uno nuevo.</p>';
+        return;
+    }
+    
+    container.innerHTML = sprints.map(sprint => {
+        const status = sprint.status || 'Planning';
+        const statusClass = status.toLowerCase().replace(' ', '-');
+        
+        return `
+        <div class="sprint-card">
+            <div class="sprint-header">
+                <div class="sprint-title">
+                    <h4>${escapeHtml(sprint.name || 'Sin nombre')}</h4>
+                    <div class="sprint-dates">
+                        <i class="fas fa-calendar"></i> 
+                        ${sprint.startDate ? new Date(sprint.startDate).toLocaleDateString() : 'N/A'} - 
+                        ${sprint.endDate ? new Date(sprint.endDate).toLocaleDateString() : 'N/A'}
+                    </div>
+                </div>
+                <span class="status-badge status-${statusClass}">${status}</span>
+            </div>
+            <p>${escapeHtml(sprint.goal || 'Sin meta definida')}</p>
+            <div class="sprint-progress">
+                <div class="sprint-stat">
+                    <div class="sprint-stat-value">${sprint.totalStoryPoints || 0}</div>
+                    <div class="sprint-stat-label">Story Points</div>
+                </div>
+                <div class="sprint-stat">
+                    <div class="sprint-stat-value">${sprint.completedStoryPoints || 0}</div>
+                    <div class="sprint-stat-label">Completados</div>
+                </div>
+                <div class="sprint-stat">
+                    <div class="sprint-stat-value">${sprint.totalTasks || 0}</div>
+                    <div class="sprint-stat-label">Tareas</div>
+                </div>
+                <div class="sprint-stat">
+                    <div class="sprint-stat-value">${sprint.completedTasks || 0}</div>
+                    <div class="sprint-stat-label">Completadas</div>
+                </div>
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+async function loadSprintSelects() {
+    console.log('Loading sprint selects...');
+    console.log('Current projects:', projects);
+    
+    // First ensure we have projects loaded
+    if (!projects || projects.length === 0) {
+        console.log('No projects, loading...');
+        await loadProjects();
+    }
+    
+    console.log('Projects after load:', projects);
+    
+    // Load sprints for the first project
+    if (projects.length > 0) {
+        try {
+            console.log('Loading sprints for project:', projects[0].id);
+            sprints = await apiRequest(`/api/sprints/project/${projects[0].id}`);
+            console.log('Sprints loaded for selects:', sprints);
+            populateSprintSelects();
+        } catch (error) {
+            console.error('Error loading sprints for selects:', error);
+            const select = document.getElementById('board-sprint-select');
+            if (select) {
+                select.innerHTML = '<option value="">No hay sprints</option>';
+            }
+        }
+    } else {
+        console.log('No projects available');
+        const select = document.getElementById('board-sprint-select');
+        if (select) {
+            select.innerHTML = '<option value="">Crea un proyecto primero</option>';
+        }
+    }
+}
+
+function populateSprintSelects() {
+    const options = sprints.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    
+    ['board-sprint-select', 'standup-sprint-select', 'story-sprint', 'sprint-backlog-select'].forEach(id => {
+        const select = document.getElementById(id);
+        if (select) {
+            select.innerHTML = '<option value="">Seleccionar Sprint...</option>' + options;
+        }
+    });
+}
+
+async function handleCreateSprint(e) {
+    e.preventDefault();
+    console.log('Creating sprint...');
+    
+    const projectId = document.getElementById('sprint-project').value;
+    const name = document.getElementById('sprint-name').value;
+    const goal = document.getElementById('sprint-goal').value;
+    const startDate = document.getElementById('sprint-start').value;
+    const endDate = document.getElementById('sprint-end').value;
+    
+    console.log('Form values:', { projectId, name, startDate, endDate });
+    
+    // Validation
+    if (!projectId) {
+        showToast('Debes seleccionar un proyecto', 'error');
+        return;
+    }
+    if (!name) {
+        showToast('El nombre del sprint es requerido', 'error');
+        return;
+    }
+    if (!startDate || !endDate) {
+        showToast('Las fechas de inicio y fin son requeridas', 'error');
+        return;
+    }
+    if (new Date(startDate) > new Date(endDate)) {
+        showToast('La fecha de inicio no puede ser posterior a la fecha de fin', 'error');
+        return;
+    }
+    
+    const data = {
+        projectId,
+        name,
+        goal,
+        startDate,
+        endDate
+    };
+    
+    console.log('Sending sprint data:', data);
+    
+    try {
+        const result = await apiRequest('/api/sprints', {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+        console.log('Sprint created:', result);
+        
+        hideModal('sprint-modal');
+        e.target.reset();
+        loadSprints();
+        showToast('Sprint creado exitosamente');
+    } catch (error) {
+        console.error('Error creating sprint:', error);
+        showToast('Error: ' + error.message, 'error');
+    }
+}
+
+// Board
+async function loadBoard(sprintId) {
+    if (!sprintId) return;
+    
+    try {
+        const board = await apiRequest(`/api/tasks/board/${sprintId}`);
+        renderBoard(board);
+    } catch (error) {
+        console.error('Error loading board:', error);
+    }
+}
+
+function renderBoard(board) {
+    const columns = {
+        'todo': document.getElementById('board-todo'),
+        'in-progress': document.getElementById('board-in-progress'),
+        'done': document.getElementById('board-done'),
+        'blocked': document.getElementById('board-blocked')
+    };
+    
+    let totalTasks = 0;
+    
+    Object.entries(columns).forEach(([key, container]) => {
+        if (!container) return;
+        
+        // Set up drop zone
+        container.dataset.status = key;
+        setupDropZone(container);
+        
+        const tasks = board[key] || [];
+        totalTasks += tasks.length;
+        
+        if (tasks.length === 0) {
+            container.innerHTML = '<p class="text-muted text-center" style="padding: 20px;">Sin tareas</p>';
+            return;
+        }
+        
+        container.innerHTML = tasks.map(task => `
+            <div class="kanban-task" draggable="true" data-task-id="${task.id}">
+                <div class="kanban-task-title">${escapeHtml(task.title)}</div>
+                <div class="kanban-task-meta">
+                    <span class="task-assignee">
+                        <i class="fas fa-user"></i>
+                        ${task.assignedToName || 'Sin asignar'}
+                    </span>
+                    ${task.estimatedHours ? `<span><i class="fas fa-clock"></i> ${task.estimatedHours}h</span>` : ''}
+                </div>
+            </div>
+        `).join('');
+        
+        // Add drag listeners to tasks
+        container.querySelectorAll('.kanban-task').forEach(task => {
+            task.addEventListener('dragstart', handleDragStart);
+            task.addEventListener('dragend', handleDragEnd);
+        });
+    });
+    
+    // Show/hide help message based on tasks
+    const helpMessage = document.getElementById('board-help-message');
+    const kanbanContainer = document.getElementById('kanban-container');
+    if (helpMessage && kanbanContainer) {
+        if (totalTasks === 0) {
+            helpMessage.style.display = 'block';
+            kanbanContainer.style.display = 'none';
+        } else {
+            helpMessage.style.display = 'none';
+            kanbanContainer.style.display = 'grid';
+        }
+    }
+}
+
+// Drag and Drop handlers
+let draggedTaskId = null;
+
+function handleDragStart(e) {
+    draggedTaskId = e.target.dataset.taskId;
+    e.target.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+}
+
+function handleDragEnd(e) {
+    e.target.classList.remove('dragging');
+    draggedTaskId = null;
+}
+
+function setupDropZone(container) {
+    container.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        container.classList.add('drag-over');
+    });
+    
+    container.addEventListener('dragleave', () => {
+        container.classList.remove('drag-over');
+    });
+    
+    container.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        container.classList.remove('drag-over');
+        
+        if (!draggedTaskId) return;
+        
+        const newStatus = container.dataset.status;
+        const statusMap = {
+            'todo': 'Todo',
+            'in-progress': 'InProgress',
+            'done': 'Done',
+            'blocked': 'Blocked'
+        };
+        
+        try {
+            // If moving to Done, prompt for actual hours
+            let actualHours = 0;
+            if (newStatus === 'done') {
+                const hoursInput = prompt('Horas reales trabajadas (opcional):', '0');
+                actualHours = parseInt(hoursInput) || 0;
+            }
+            
+            await apiRequest(`/api/tasks/${draggedTaskId}/status`, {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    status: statusMap[newStatus],
+                    actualHours: actualHours
+                })
+            });
+            
+            showToast(`Tarea movida a ${getStatusLabel(newStatus)}`);
+            
+            // Reload board
+            const sprintId = document.getElementById('board-sprint-select').value;
+            if (sprintId) {
+                loadBoard(sprintId);
+            }
+        } catch (error) {
+            showToast('Error al mover tarea: ' + error.message, 'error');
+        }
+    });
+}
+
+function getStatusLabel(status) {
+    const labels = {
+        'todo': 'Por Hacer',
+        'in-progress': 'En Progreso',
+        'done': 'Completado',
+        'blocked': 'Bloqueado'
+    };
+    return labels[status] || status;
+}
+
+// Standup
+async function loadStandupNotes(sprintId) {
+    if (!sprintId) return;
+    
+    try {
+        const notes = await apiRequest(`/api/standup/sprint/${sprintId}/today`);
+        renderStandupNotes(notes);
+    } catch (error) {
+        console.error('Error loading standup:', error);
+    }
+}
+
+function renderStandupNotes(notes) {
+    const container = document.getElementById('standup-today-list');
+    if (!container) return;
+    
+    if (notes.length === 0) {
+        container.innerHTML = '<p>No hay registros para hoy.</p>';
+        return;
+    }
+    
+    container.innerHTML = notes.map(note => `
+        <div class="standup-note">
+            <div class="standup-note-header">
+                <span class="standup-note-author">${escapeHtml(note.userName || 'Usuario')}</span>
+                <span class="standup-note-time">${new Date(note.createdAt).toLocaleTimeString()}</span>
+            </div>
+            <div class="standup-note-content">
+                <p><strong>Ayer:</strong> ${escapeHtml(note.yesterday || '-')}</p>
+                <p><strong>Hoy:</strong> ${escapeHtml(note.today || '-')}</p>
+                ${note.blockers ? `<p class="blockers-text"><strong>Bloqueadores:</strong> ${escapeHtml(note.blockers)}</p>` : ''}
+            </div>
+        </div>
+    `).join('');
+}
+
+async function handleCreateStandup(e) {
+    e.preventDefault();
+    
+    const sprintId = document.getElementById('standup-sprint-select').value;
+    if (!sprintId) {
+        showToast('Selecciona un sprint', 'error');
+        return;
+    }
+    
+    const data = {
+        sprintId: sprintId,
+        userId: currentUser.id,
+        date: new Date().toISOString(),
+        yesterday: document.getElementById('standup-yesterday').value,
+        today: document.getElementById('standup-today').value,
+        blockers: document.getElementById('standup-blockers').value
+    };
+    
+    try {
+        await apiRequest('/api/standup', {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+        
+        e.target.reset();
+        loadStandupNotes(sprintId);
+        showToast('Standup registrado exitosamente');
+    } catch (error) {
+        showToast('Error: ' + error.message, 'error');
+    }
+}
+
+// Tasks
+function showTaskModal(storyId, taskId = null) {
+    document.getElementById('task-story-id').value = storyId;
+    document.getElementById('task-id').value = taskId || '';
+    
+    if (taskId) {
+        // Edit mode - load task data
+        loadTaskForEdit(taskId);
+    } else {
+        // Create mode
+        document.getElementById('task-modal-title').textContent = 'Nueva Tarea';
+        document.getElementById('task-form').reset();
+        document.getElementById('task-story-id').value = storyId;
+    }
+    
+    // Load users for assignment dropdown
+    loadUsersForTaskAssignment();
+    showModal('task-modal');
+}
+
+async function loadTaskForEdit(taskId) {
+    try {
+        const task = await apiRequest(`/api/tasks/${taskId}`);
+        document.getElementById('task-modal-title').textContent = 'Editar Tarea';
+        document.getElementById('task-title').value = task.title;
+        document.getElementById('task-description').value = task.description || '';
+        document.getElementById('task-hours').value = task.estimatedHours || 4;
+        document.getElementById('task-actual-hours').value = task.actualHours || 0;
+        document.getElementById('task-assigned-to').value = task.assignedTo || '';
+    } catch (error) {
+        showToast('Error al cargar tarea: ' + error.message, 'error');
+    }
+}
+
+async function loadUsersForTaskAssignment() {
+    try {
+        const users = await apiRequest('/api/users');
+        const select = document.getElementById('task-assigned-to');
+        select.innerHTML = '<option value="">Sin asignar</option>';
+        users.forEach(user => {
+            select.innerHTML += `<option value="${user.id}">${user.name}</option>`;
+        });
+    } catch (error) {
+        console.error('Error loading users:', error);
+    }
+}
+
+async function handleCreateTask(e) {
+    e.preventDefault();
+    
+    const id = document.getElementById('task-id').value;
+    const isEdit = !!id;
+    
+    const data = {
+        storyId: document.getElementById('task-story-id').value,
+        title: document.getElementById('task-title').value,
+        description: document.getElementById('task-description').value,
+        estimatedHours: parseInt(document.getElementById('task-hours').value) || null
+    };
+    
+    try {
+        let taskId;
+        
+        if (isEdit) {
+            // Update existing task
+            await apiRequest(`/api/tasks/${id}`, {
+                method: 'PUT',
+                body: JSON.stringify(data)
+            });
+            taskId = id;
+        } else {
+            // Create new task
+            const result = await apiRequest('/api/tasks', {
+                method: 'POST',
+                body: JSON.stringify(data)
+            });
+            taskId = result.id;
+        }
+        
+        // Handle user assignment
+        const assignedTo = document.getElementById('task-assigned-to').value;
+        if (assignedTo) {
+            await apiRequest(`/api/tasks/${taskId}/assign`, {
+                method: 'PATCH',
+                body: JSON.stringify(assignedTo)
+            });
+        }
+        
+        hideModal('task-modal');
+        loadBacklog();
+        showToast(isEdit ? 'Tarea actualizada' : 'Tarea creada exitosamente');
+    } catch (error) {
+        showToast('Error: ' + error.message, 'error');
+    }
+}
+
+async function deleteTask(taskId) {
+    if (!confirm('¿Estás seguro de eliminar esta tarea?')) {
+        return;
+    }
+    
+    try {
+        await apiRequest(`/api/tasks/${taskId}`, { method: 'DELETE' });
+        showToast('Tarea eliminada exitosamente');
+        loadBacklog();
+    } catch (error) {
+        showToast('Error al eliminar tarea: ' + error.message, 'error');
+    }
+}
+
+// Modal helpers
+async function showModal(modalId) {
+    document.getElementById(modalId)?.classList.add('active');
+    
+    // Load projects when opening modals that need them
+    if (modalId === 'sprint-modal' || modalId === 'story-modal') {
+        console.log(`Opening ${modalId}, loading projects...`);
+        if (!projects || projects.length === 0) {
+            await loadProjects();
+        }
+        populateProjectSelects();
+    }
+}
+
+function hideModal(id) {
+    document.getElementById(id).classList.remove('active');
+    if (id === 'story-modal') {
+        document.getElementById('story-form').reset();
+        document.getElementById('story-id').value = '';
+        document.getElementById('story-modal-title').textContent = 'Nueva Historia de Usuario';
+    }
+}
+
+// Close modals on outside click
+document.addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal') && e.target.classList.contains('active')) {
+        e.target.classList.remove('active');
+    }
+});
+
+// Toast notification
+function showToast(message, type = 'success') {
+    const toast = document.getElementById('toast');
+    const toastMessage = document.getElementById('toast-message');
+    
+    toastMessage.textContent = message;
+    toast.classList.add('show');
+    
+    setTimeout(() => {
+        toast.classList.remove('show');
+    }, 3000);
+}
+
+// Utility functions
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function getPriorityText(priority) {
+    const texts = { 0: 'Baja', 1: 'Media', 2: 'Alta', 3: 'Crítica' };
+    return texts[priority] || 'Media';
+}
+
+function getPriorityClass(priority) {
+    const classes = { 0: 'low', 1: 'medium', 2: 'high', 3: 'high' };
+    return classes[priority] || 'medium';
+}
+
+// Settings
+function loadSettings() {
+    const user = JSON.parse(localStorage.getItem('scrumUser') || '{}');
+    document.getElementById('settings-name').value = user.name || '';
+    document.getElementById('settings-email').value = user.email || '';
+    document.getElementById('settings-role').value = user.role || 'Developer';
+}
+
+async function handleUpdateProfile(e) {
+    e.preventDefault();
+    const name = document.getElementById('settings-name').value;
+    const email = document.getElementById('settings-email').value;
+    const user = JSON.parse(localStorage.getItem('scrumUser') || '{}');
+
+    try {
+        const response = await apiRequest('/api/users/' + user.id, 'PUT', { name, email });
+        
+        // Update local storage
+        user.name = name;
+        user.email = email;
+        localStorage.setItem('scrumUser', JSON.stringify(user));
+        
+        // Update sidebar display
+        document.getElementById('user-name').textContent = name;
+        
+        showToast('Perfil actualizado exitosamente');
+    } catch (error) {
+        showToast('Error al actualizar perfil: ' + error.message, 'error');
+    }
+}
+
+async function handleChangePassword(e) {
+    e.preventDefault();
+    const currentPassword = document.getElementById('current-password').value;
+    const newPassword = document.getElementById('new-password').value;
+    const confirmPassword = document.getElementById('confirm-password').value;
+    const user = JSON.parse(localStorage.getItem('scrumUser') || '{}');
+
+    if (newPassword !== confirmPassword) {
+        showToast('Las contraseñas no coinciden', 'error');
+        return;
+    }
+
+    if (newPassword.length < 6) {
+        showToast('La nueva contraseña debe tener al menos 6 caracteres', 'error');
+        return;
+    }
+
+    try {
+        await apiRequest('/api/users/' + user.id + '/password', 'PUT', {
+            currentPassword,
+            newPassword
+        });
+        
+        showToast('Contraseña cambiada exitosamente');
+        document.getElementById('password-form').reset();
+    } catch (error) {
+        showToast('Error al cambiar contraseña: ' + error.message, 'error');
+    }
+}
+
+async function deleteAccount() {
+    if (!confirm('¿Estás seguro de que quieres eliminar tu cuenta? Esta acción no se puede deshacer.')) {
+        return;
+    }
+
+    const user = JSON.parse(localStorage.getItem('scrumUser') || '{}');
+    
+    try {
+        await apiRequest('/api/users/' + user.id, 'DELETE');
+        localStorage.removeItem('scrumUser');
+        showToast('Cuenta eliminada');
+        window.location.href = 'index.html';
+    } catch (error) {
+        showToast('Error al eliminar cuenta: ' + error.message, 'error');
+    }
+}
+
+// Make functions globally available for onclick handlers
+window.showModal = showModal;
+window.hideModal = hideModal;
+window.showTaskModal = showTaskModal;
+window.navigateTo = navigateTo;
+window.logout = logout;
+window.handleCreateStandup = handleCreateStandup;
+window.deleteAccount = deleteAccount;
+window.deleteProject = deleteProject;

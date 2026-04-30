@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registro - Scrum System</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+</head>
+<body>
+    <div class="login-screen">
+        <div class="login-bg-dark">
+            <div class="glow glow-1"></div>
+            <div class="glow glow-2"></div>
+        </div>
+        
+        <a href="index.html" class="btn-back">
+            <i class="fas fa-arrow-left"></i> Volver
+        </a>
+        
+        <div class="login-container-dark">
+            <div class="login-card-dark">
+                <div class="login-brand">
+                    <div class="brand-icon">
+                        <i class="fas fa-user-plus"></i>
+                    </div>
+                    <h2>Crea tu cuenta</h2>
+                    <p>Únete a Scrum System gratis</p>
+                </div>
+                
+                <form id="register-form" class="login-form-dark">
+                    <div class="input-dark">
+                        <i class="fas fa-user"></i>
+                        <input type="text" id="register-name" required placeholder="Nombre completo">
+                    </div>
+                    <div class="input-dark">
+                        <i class="fas fa-envelope"></i>
+                        <input type="email" id="register-email" required placeholder="Correo electrónico">
+                    </div>
+                    <div class="input-dark">
+                        <i class="fas fa-lock"></i>
+                        <input type="password" id="register-password" required placeholder="Contraseña">
+                        <button type="button" class="toggle-pwd" onclick="togglePassword('register-password', 'toggle-icon-register')">
+                            <i class="fas fa-eye" id="toggle-icon-register"></i>
+                        </button>
+                    </div>
+                    <div class="input-dark">
+                        <i class="fas fa-lock"></i>
+                        <input type="password" id="register-confirm" required placeholder="Confirmar contraseña">
+                    </div>
+                    
+                    <div class="login-options">
+                        <label class="checkbox-dark">
+                            <input type="checkbox" id="accept-terms">
+                            <span class="check-dark"><i class="fas fa-check"></i></span>
+                            Acepto los términos y condiciones
+                        </label>
+                    </div>
+                    
+                    <button type="submit" class="btn-login-dark">
+                        <span>Crear Cuenta</span>
+                        <i class="fas fa-arrow-right"></i>
+                    </button>
+                </form>
+                
+                <div class="login-divider">
+                    <span>o continúa con</span>
+                </div>
+                
+                <div class="demo-buttons">
+                    <button class="btn-demo" onclick="window.location.href='login.html'">
+                        <i class="fas fa-sign-in-alt"></i>
+                        <span>Ya tengo cuenta</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast">
+        <span id="toast-message"></span>
+    </div>
+
+    <script src="js/auth.js"></script>
+</body>
+</html>
