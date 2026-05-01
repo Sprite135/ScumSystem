@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - Scrum System</title>
-    <link rel="stylesheet" href="css/styles.css?v=2100">
+    <link rel="stylesheet" href="css/styles.css?v=3801">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -375,6 +375,57 @@
         </div>
     </div>
 
+    <!-- Start Sprint Modal -->
+    <div id="start-sprint-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Iniciar sprint</h2>
+                <button class="modal-close" onclick="hideModal('start-sprint-modal')">
+                    <svg fill="none" viewBox="0 0 16 16" role="presentation">
+                        <path fill="currentcolor" fill-rule="evenodd" d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.707.708L7.293 8l-3.646 3.646.707.708L8 8.707z" clip-rule="evenodd"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-subtitle" id="sprint-activities-count">0 actividades se incluirán en este sprint.</p>
+                <p class="modal-note">Los campos obligatorios están marcados con un asterisco *</p>
+                <form id="start-sprint-form">
+                    <div class="form-group">
+                        <label for="sprint-name">Nombre del sprint *</label>
+                        <input type="text" id="sprint-name" name="sprint-name" required placeholder="Ej: Sprint 1 - Q1 2024">
+                    </div>
+                    <div class="form-group">
+                        <label for="sprint-duration">Duración *</label>
+                        <select id="sprint-duration" name="sprint-duration" required onchange="calculateEndDate()">
+                            <option value="">Seleccionar duración</option>
+                            <option value="1">1 semana</option>
+                            <option value="2">2 semanas</option>
+                            <option value="4">4 semanas</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="sprint-start-date">Fecha de inicio *</label>
+                            <input type="date" id="sprint-start-date" name="sprint-start-date" required onchange="calculateEndDate()">
+                        </div>
+                        <div class="form-group">
+                            <label for="sprint-end-date">Fecha de finalización *</label>
+                            <input type="date" id="sprint-end-date" name="sprint-end-date" readonly>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="sprint-goal">Meta del sprint</label>
+                        <textarea id="sprint-goal" name="sprint-goal" rows="3" placeholder="Describe el objetivo principal de este sprint..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="hideModal('start-sprint-modal')">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="submitStartSprint()">Iniciar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast -->
     <div id="toast" class="toast">
         <div class="toast-content">
@@ -382,6 +433,6 @@
         </div>
     </div>
 
-    <script src="js/app.js?v=2100"></script>
+    <script src="js/app.js?v=3816"></script>
 </body>
 </html>
