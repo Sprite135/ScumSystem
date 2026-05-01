@@ -1523,7 +1523,7 @@ function renderProjectBacklog(stories, members) {
                                     </svg>
                                 </div>
                             </button>
-                            <button class="create-submit-btn" type="button" disabled>
+                            <button class="create-submit-btn" type="button" disabled onclick="createStoryForSprint('sprint-1')">
                                 <span>Crear</span>
                                 <svg fill="none" viewBox="0 0 16 16" role="presentation">
                                     <path fill="currentcolor" fill-rule="evenodd" d="M12.5 8V3H14v5.438c0 .586-.476 1.062-1.062 1.062H4.56l2.72 2.72-1.061 1.06-4-4a.75.75 0 0 1 0-1.06l4-4 1.06 1.06L4.56 8z" clip-rule="evenodd"></path>
@@ -2059,6 +2059,9 @@ function createSprintFromBacklog() {
                 </div>
             </div>
         </div>
+        <div class="sprint-content" id="sprint-content-${sprintId}">
+            <!-- Stories will be rendered here -->
+        </div>
         <div class="backlog-nudge-container" id="create-story-container-${sprintId}">
             <div class="create-story-form" id="create-story-form-${sprintId}" style="display: none;">
                 <div class="create-form-row">
@@ -2083,7 +2086,7 @@ function createSprintFromBacklog() {
                             </svg>
                         </div>
                     </button>
-                    <button class="create-submit-btn" type="button" disabled>
+                    <button class="create-submit-btn" type="button" disabled onclick="createStoryForSprint('${sprintId}')">
                         <span>Crear</span>
                         <svg fill="none" viewBox="0 0 16 16" role="presentation">
                             <path fill="currentcolor" fill-rule="evenodd" d="M12.5 8V3H14v5.438c0 .586-.476 1.062-1.062 1.062H4.56l2.72 2.72-1.061 1.06-4-4a.75.75 0 0 1 0-1.06l4-4 1.06 1.06L4.56 8z" clip-rule="evenodd"></path>
@@ -2099,9 +2102,6 @@ function createSprintFromBacklog() {
                     Crear
                 </button>
             </div>
-        </div>
-        <div class="sprint-content" id="sprint-content-${sprintId}">
-            <!-- Stories will be rendered here -->
         </div>
     `;
     
@@ -2181,8 +2181,10 @@ function hideCreateStoryFormForSprint(sprintId) {
 }
 
 function createStoryForSprint(sprintId) {
-    const titleInput = document.getElementById(`new-story-title-${sprintId}`);
-    const title = titleInput.value.trim();
+    // For Sprint 1, the ID is different (no suffix)
+    const inputId = sprintId === 'sprint-1' ? 'new-story-title' : `new-story-title-${sprintId}`;
+    const titleInput = document.getElementById(inputId);
+    const title = titleInput ? titleInput.value.trim() : '';
     
     if (!title) {
         showToast('Por favor ingresa un título para la historia', 'error');
@@ -2222,17 +2224,16 @@ function createStoryForSprint(sprintId) {
     
     // Add story to the sprint content
     const sprintContent = document.getElementById(`sprint-content-${sprintId}`);
-    const createContainer = document.getElementById(`create-story-container-${sprintId}`);
     
-    if (sprintContent && createContainer) {
+    if (sprintContent) {
         const storyCardHTML = createBacklogStoryCard(newStory, [], projectKey);
         if (storyCardHTML) {
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = storyCardHTML;
             const storyCard = tempDiv.firstElementChild;
             
-            // Insert before the create container
-            sprintContent.insertBefore(storyCard, createContainer);
+            // Append to sprint content
+            sprintContent.appendChild(storyCard);
         }
     }
     
@@ -2727,12 +2728,38 @@ document.addEventListener('click', function(event) {
     }
 });
 
-// Close create story form when clicking outside
+// Close create story form when clicking outside (only for dynamic sprints)
+document.addEventListener('click', function(event) {
+    // Check all create story forms except Sprint 1
+    document.querySelectorAll('.create-story-form').forEach(form => {
+        if (form.style.display === 'block' && form.id !== 'create-story-form') {
+            // Get the corresponding trigger for dynamic sprint
+            const formId = form.id;
+            const sprintId = formId.replace('create-story-form-', '');
+            const triggerId = `create-story-trigger-${sprintId}`;
+            const trigger = document.getElementById(triggerId);
+            
+            // Check if click is outside the form and not on the trigger button
+            if (!event.target.closest('.create-story-form') && !event.target.closest('.create-story-btn')) {
+                // Hide the form and show trigger
+                form.style.display = 'none';
+                if (trigger) trigger.style.display = 'block';
+                
+                // Clear form
+                const inputId = `new-story-title-${sprintId}`;
+                const input = document.getElementById(inputId);
+                if (input) input.value = '';
+            }
+        }
+    });
+});
+
+// Original Sprint 1 handler (keep existing)
 document.addEventListener('click', function(event) {
     const form = document.getElementById('create-story-form');
     const trigger = document.getElementById('create-story-trigger');
     
-    // Only if form is visible
+    // Only if form is visible and this is Sprint 1
     if (form && form.style.display === 'block') {
         // Check if click is outside the form and not on the trigger button
         if (!event.target.closest('.create-story-form') && !event.target.closest('.create-story-btn')) {
