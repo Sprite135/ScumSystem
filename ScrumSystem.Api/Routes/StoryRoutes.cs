@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+using ScrumSystem.Api.Data;
 using ScrumSystem.Api.Models;
 
 namespace ScrumSystem.Api.Routes;
@@ -9,449 +9,263 @@ public static class StoryRoutes
     {
         var group = app.MapGroup("/api/stories");
 
-        // Create story
-        group.MapPost("/", async (CreateStoryRequest request, DatabaseContext db) =>
+        group.MapGet("/", (AppDataStore store) =>
         {
-            try
+            lock (store.SyncRoot)
             {
-                Console.WriteLine($"[CREATE STORY] ProjectId: {request.ProjectId}, Title: {request.Title}, SprintId: {request.SprintId}");
-                
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
+                return Results.Ok(store.Data.UserStories
+                    .OrderByDescending(story => story.CreatedAt)
+                    .Select(story => ToStoryDto(story, store))
+                    .ToList());
+            }
+        });
 
-                var id = Guid.NewGuid();
-                var status = request.SprintId.HasValue ? StoryStatus.SprintBacklog : StoryStatus.Backlog;
-                Console.WriteLine($"[CREATE STORY] Generated Id: {id}, Status: {status}");
+        group.MapGet("/{id}", (string id, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
+                return story is null ? Results.NotFound() : Results.Ok(ToStoryDto(story, store));
+            }
+        });
 
-                var sql = @"
-                    INSERT INTO UserStories (Id, ProjectId, SprintId, Title, Description, AcceptanceCriteria, StoryPoints, Priority, Status, CreatedBy)
-                    VALUES (@Id, @ProjectId, @SprintId, @Title, @Description, @AcceptanceCriteria, @StoryPoints, @Priority, @Status, @CreatedBy)";
+        group.MapGet("/project/{projectId}", (string projectId, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                return Results.Ok(store.Data.UserStories
+                    .Where(story => story.ProjectId == projectId)
+                    .OrderByDescending(story => story.CreatedAt)
+                    .Select(story => ToStoryDto(story, store))
+                    .ToList());
+            }
+        });
 
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Id", id);
-                cmd.Parameters.AddWithValue("@ProjectId", request.ProjectId);
-                cmd.Parameters.AddWithValue("@SprintId", (object?)request.SprintId ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@Title", request.Title);
-                cmd.Parameters.AddWithValue("@Description", (object?)request.Description ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@AcceptanceCriteria", (object?)request.AcceptanceCriteria ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@StoryPoints", (object?)request.StoryPoints ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@Priority", request.Priority);
-                cmd.Parameters.AddWithValue("@Status", status.ToString());
-                cmd.Parameters.AddWithValue("@CreatedBy", DBNull.Value);
+        group.MapGet("/project/{projectId}/backlog", (string projectId, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                return Results.Ok(store.Data.UserStories
+                    .Where(story => story.ProjectId == projectId && string.IsNullOrWhiteSpace(story.SprintId))
+                    .OrderByDescending(story => story.CreatedAt)
+                    .Select(story => ToStoryDto(story, store))
+                    .ToList());
+            }
+        });
 
-                var affected = await cmd.ExecuteNonQueryAsync();
-                Console.WriteLine($"[CREATE STORY] Rows affected: {affected}");
+        group.MapGet("/project/{projectId}/board", (string projectId, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var members = store.Data.ProjectMembers
+                    .Where(member => member.ProjectId == projectId)
+                    .Join(store.Data.Users, member => member.UserId, user => user.Id, (member, user) => new ProjectMemberDto
+                    {
+                        Id = user.Id,
+                        Name = user.Name,
+                        Email = user.Email,
+                        Role = member.Role
+                    })
+                    .OrderBy(member => member.Name)
+                    .ToList();
 
-                return Results.Created($"/api/stories/{id}", new UserStory
+                var stories = store.Data.UserStories
+                    .Where(story => story.ProjectId == projectId)
+                    .OrderByDescending(story => story.UpdatedAt ?? story.CreatedAt)
+                    .Select(story =>
+                    {
+                        var assignee = store.Data.Users.FirstOrDefault(user => user.Id == story.AssigneeId);
+                        return new BoardStoryDto
+                        {
+                            Id = story.Id,
+                            ProjectId = story.ProjectId,
+                            Title = story.Title,
+                            Description = story.Description,
+                            StoryPoints = story.StoryPoints,
+                            Priority = story.Priority,
+                            Status = story.Status,
+                            AssigneeId = story.AssigneeId,
+                            AssigneeName = assignee?.Name
+                        };
+                    })
+                    .ToList();
+
+                return Results.Ok(new BoardDataDto { Stories = stories, Members = members });
+            }
+        });
+
+        group.MapGet("/sprint/{sprintId}", (string sprintId, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                return Results.Ok(store.Data.UserStories
+                    .Where(story => story.SprintId == sprintId)
+                    .OrderByDescending(story => story.CreatedAt)
+                    .Select(story => ToStoryDto(story, store))
+                    .ToList());
+            }
+        });
+
+        group.MapPost("/", (CreateStoryRequest request, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                if (store.Data.Projects.All(project => project.Id != request.ProjectId))
                 {
-                    Id = id,
+                    return Results.BadRequest("El proyecto no existe");
+                }
+
+                var project = store.Data.Projects.First(project => project.Id == request.ProjectId);
+                var storyNumber = store.Data.UserStories.Count(story => story.ProjectId == request.ProjectId) + 1;
+                var story = new UserStory
+                {
+                    Id = Guid.NewGuid().ToString(),
                     ProjectId = request.ProjectId,
                     SprintId = request.SprintId,
-                    Title = request.Title,
-                    Description = request.Description,
-                    AcceptanceCriteria = request.AcceptanceCriteria,
+                    Title = request.Title.Trim(),
+                    Description = request.Description?.Trim(),
+                    AcceptanceCriteria = request.AcceptanceCriteria?.Trim(),
                     StoryPoints = request.StoryPoints,
                     Priority = request.Priority,
-                    Status = status,
+                    AssigneeId = request.AssigneeId,
+                    Status = string.IsNullOrWhiteSpace(request.Status)
+                        ? (string.IsNullOrWhiteSpace(request.SprintId) ? "Backlog" : "SprintBacklog")
+                        : request.Status,
+                    Key = $"{(project.Key ?? "PROJ").ToUpperInvariant()}-{storyNumber}",
                     CreatedAt = DateTime.UtcNow
-                });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error creating story: {ex.Message}");
+                };
+
+                store.Data.UserStories.Add(story);
+                store.Save();
+                return Results.Created($"/api/stories/{story.Id}", ToStoryDto(story, store));
             }
         });
 
-        // Get product backlog (stories without sprint)
-        group.MapGet("/project/{projectId:guid}/backlog", async (Guid projectId, DatabaseContext db) =>
+        group.MapPut("/{id}", (string id, CreateStoryRequest request, AppDataStore store) =>
         {
-            Console.WriteLine($"[GET BACKLOG] Requested for project: {projectId}");
-            var stories = new List<UserStoryDto>();
-
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-            
-            // First, let's check all stories in the database for this project
-            var countSql = "SELECT COUNT(*) FROM UserStories WHERE ProjectId = @ProjectId";
-            using var countCmd = new SqlCommand(countSql, conn);
-            countCmd.Parameters.AddWithValue("@ProjectId", projectId);
-            var totalCount = (int)(await countCmd.ExecuteScalarAsync() ?? 0);
-            Console.WriteLine($"[GET BACKLOG] Total stories for project in DB: {totalCount}");
-
-            var sql = @"
-                SELECT us.*,
-                    (SELECT COUNT(*) FROM Tasks WHERE StoryId = us.Id) as TaskCount,
-                    (SELECT COUNT(*) FROM Tasks WHERE StoryId = us.Id AND Status = 'Done') as CompletedTaskCount
-                FROM UserStories us
-                WHERE us.ProjectId = @ProjectId AND us.Status = 'Backlog'
-                ORDER BY us.Priority DESC, us.CreatedAt DESC";
-
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@ProjectId", projectId);
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
+            lock (store.SyncRoot)
             {
-                stories.Add(MapUserStoryDto(reader));
-            }
-            
-            Console.WriteLine($"[GET BACKLOG] Returning {stories.Count} stories");
-            return Results.Ok(stories);
-        });
-
-        // Get sprint backlog
-        group.MapGet("/sprint/{sprintId:guid}", async (Guid sprintId, DatabaseContext db) =>
-        {
-            try
-            {
-                var stories = new List<UserStoryDto>();
-
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                Console.WriteLine($"[SPRINT BACKLOG] Loading stories for sprint {sprintId}");
-
-                var sql = @"
-                    SELECT us.Id, us.ProjectId, us.SprintId, us.Title, us.Description, 
-                           us.AcceptanceCriteria, us.StoryPoints, us.Priority, us.Status, 
-                           us.CreatedBy, us.CreatedAt,
-                           (SELECT COUNT(*) FROM Tasks WHERE StoryId = us.Id) as TaskCount,
-                           (SELECT COUNT(*) FROM Tasks WHERE StoryId = us.Id AND Status = 'Done') as CompletedTaskCount
-                    FROM UserStories us
-                    WHERE us.SprintId = @SprintId
-                    ORDER BY us.Priority DESC";
-
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@SprintId", sprintId);
-                using var reader = await cmd.ExecuteReaderAsync();
-
-                while (await reader.ReadAsync())
+                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
+                if (story is null)
                 {
-                    stories.Add(new UserStoryDto
-                    {
-                        Id = (Guid)reader["Id"],
-                        ProjectId = (Guid)reader["ProjectId"],
-                        SprintId = reader["SprintId"] as Guid?,
-                        Title = reader["Title"].ToString()!,
-                        Description = reader["Description"]?.ToString(),
-                        AcceptanceCriteria = reader["AcceptanceCriteria"]?.ToString(),
-                        StoryPoints = reader["StoryPoints"] as int?,
-                        Priority = (int)reader["Priority"],
-                        Status = Enum.Parse<StoryStatus>(reader["Status"].ToString()!),
-                        TaskCount = (int)reader["TaskCount"],
-                        CompletedTaskCount = (int)reader["CompletedTaskCount"]
-                    });
+                    return Results.NotFound();
                 }
 
-                Console.WriteLine($"[SPRINT BACKLOG] Found {stories.Count} stories");
-                return Results.Ok(stories);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[SPRINT BACKLOG] Error: {ex.Message}");
-                return Results.Problem($"Error loading sprint backlog: {ex.Message}");
-            }
-        });
+                story.Title = request.Title.Trim();
+                story.Description = request.Description?.Trim();
+                story.AcceptanceCriteria = request.AcceptanceCriteria?.Trim();
+                story.StoryPoints = request.StoryPoints;
+                story.Priority = request.Priority;
+                story.ProjectId = string.IsNullOrWhiteSpace(request.ProjectId) ? story.ProjectId : request.ProjectId;
+                story.SprintId = request.SprintId;
+                story.AssigneeId = request.AssigneeId;
+                story.Status = string.IsNullOrWhiteSpace(request.Status) ? story.Status : request.Status;
+                story.UpdatedAt = DateTime.UtcNow;
 
-        // Move story to sprint
-        group.MapPost("/{id:guid}/move-to-sprint", async (Guid id, Guid sprintId, DatabaseContext db) =>
-        {
-            try
-            {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                var sql = @"
-                    UPDATE UserStories 
-                    SET SprintId = @SprintId, Status = @Status 
-                    WHERE Id = @Id";
-
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@SprintId", sprintId);
-                cmd.Parameters.AddWithValue("@Status", StoryStatus.SprintBacklog.ToString());
-                cmd.Parameters.AddWithValue("@Id", id);
-
-                await cmd.ExecuteNonQueryAsync();
-                return Results.Ok(new { message = "Story moved to sprint" });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error moving story: {ex.Message}");
+                store.Save();
+                return Results.Ok(ToStoryDto(story, store));
             }
         });
 
-        // Update story status
-        group.MapPatch("/{id:guid}/status", async (Guid id, UpdateStatusRequest request, DatabaseContext db) =>
+        group.MapPut("/{id}/status", (string id, UpdateStatusRequest request, AppDataStore store) =>
         {
-            try
+            lock (store.SyncRoot)
             {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                var sql = "UPDATE UserStories SET Status = @Status WHERE Id = @Id";
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Status", request.Status);
-                cmd.Parameters.AddWithValue("@Id", id);
-
-                await cmd.ExecuteNonQueryAsync();
-                return Results.Ok(new { message = "Status updated" });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error updating status: {ex.Message}");
-            }
-        });
-
-        // Get story by ID
-        group.MapGet("/{id:guid}", async (Guid id, DatabaseContext db) =>
-        {
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            var sql = @"
-                SELECT us.*,
-                    (SELECT COUNT(*) FROM Tasks WHERE StoryId = us.Id) as TaskCount,
-                    (SELECT COUNT(*) FROM Tasks WHERE StoryId = us.Id AND Status = 'Done') as CompletedTaskCount
-                FROM UserStories us
-                WHERE us.Id = @Id";
-
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@Id", id);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-            if (!await reader.ReadAsync())
-            {
-                return Results.NotFound();
-            }
-
-            return Results.Ok(MapUserStoryDto(reader));
-        });
-        // Update story
-        group.MapPut("/{id:guid}", async (Guid id, CreateStoryRequest request, DatabaseContext db) =>
-        {
-            try
-            {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                var status = request.SprintId.HasValue ? StoryStatus.SprintBacklog : StoryStatus.Backlog;
-
-                var sql = @"
-                    UPDATE UserStories 
-                    SET ProjectId = @ProjectId, 
-                        SprintId = @SprintId, 
-                        Title = @Title, 
-                        Description = @Description, 
-                        AcceptanceCriteria = @AcceptanceCriteria, 
-                        StoryPoints = @StoryPoints, 
-                        Priority = @Priority, 
-                        Status = @Status
-                    WHERE Id = @Id";
-
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Id", id);
-                cmd.Parameters.AddWithValue("@ProjectId", request.ProjectId);
-                cmd.Parameters.AddWithValue("@SprintId", (object?)request.SprintId ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@Title", request.Title);
-                cmd.Parameters.AddWithValue("@Description", (object?)request.Description ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@AcceptanceCriteria", (object?)request.AcceptanceCriteria ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@StoryPoints", (object?)request.StoryPoints ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@Priority", request.Priority);
-                cmd.Parameters.AddWithValue("@Status", status.ToString());
-
-                var affected = await cmd.ExecuteNonQueryAsync();
-                if (affected == 0) return Results.NotFound();
-
-                return Results.Ok(new { message = "Historia actualizada exitosamente" });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error updating story: {ex.Message}");
-            }
-        });
-
-        // Delete story
-        group.MapDelete("/{id:guid}", async (Guid id, DatabaseContext db) =>
-        {
-            try
-            {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                // Delete related tasks first
-                var sqlTasks = "DELETE FROM Tasks WHERE StoryId = @Id";
-                using (var cmdTasks = new SqlCommand(sqlTasks, conn))
+                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
+                if (story is null)
                 {
-                    cmdTasks.Parameters.AddWithValue("@Id", id);
-                    await cmdTasks.ExecuteNonQueryAsync();
+                    return Results.NotFound();
                 }
 
-                var sqlStory = "DELETE FROM UserStories WHERE Id = @Id";
-                using (var cmdStory = new SqlCommand(sqlStory, conn))
-                {
-                    cmdStory.Parameters.AddWithValue("@Id", id);
-                    var affected = await cmdStory.ExecuteNonQueryAsync();
-                    if (affected == 0) return Results.NotFound();
-                }
-
-                return Results.Ok(new { message = "Historia eliminada exitosamente" });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error deleting story: {ex.Message}");
+                story.Status = request.Status;
+                story.UpdatedAt = DateTime.UtcNow;
+                store.Save();
+                return Results.Ok(new { message = "Historia actualizada" });
             }
         });
 
-        // Get all stories for board (Kanban view)
-        group.MapGet("/project/{projectId:guid}/board", async (Guid projectId, DatabaseContext db) =>
+        group.MapPost("/{id}/move-to-sprint", (string id, string sprintId, AppDataStore store) =>
         {
-            try
+            lock (store.SyncRoot)
             {
-                Console.WriteLine($"[BOARD] Loading board for project: {projectId}");
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                // Get stories
-                var stories = new List<BoardStoryDto>();
-                var storiesSql = @"
-                    SELECT us.Id, us.ProjectId, us.Title, us.Description, 
-                           us.StoryPoints, us.Priority, us.Status,
-                           us.CreatedBy as AssigneeId,
-                    u.Name as AssigneeName
-                    FROM UserStories us
-                    LEFT JOIN Users u ON us.CreatedBy = u.Id
-                    WHERE us.ProjectId = @ProjectId
-                    ORDER BY us.Priority DESC, us.CreatedAt DESC";
-
-                using (var cmd = new SqlCommand(storiesSql, conn))
+                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
+                if (story is null)
                 {
-                    cmd.Parameters.AddWithValue("@ProjectId", projectId);
-                    using var reader = await cmd.ExecuteReaderAsync();
-                    while (await reader.ReadAsync())
-                    {
-                        stories.Add(new BoardStoryDto
-                        {
-                            Id = (Guid)reader["Id"],
-                            ProjectId = (Guid)reader["ProjectId"],
-                            Title = reader["Title"].ToString()!,
-                            Description = reader.IsDBNull(reader.GetOrdinal("Description")) ? null : reader["Description"].ToString(),
-                            StoryPoints = reader.IsDBNull(reader.GetOrdinal("StoryPoints")) ? null : (int)reader["StoryPoints"],
-                            Priority = (int)reader["Priority"],
-                            Status = reader["Status"].ToString()!,
-                            AssigneeId = reader.IsDBNull(reader.GetOrdinal("AssigneeId")) ? null : (Guid)reader["AssigneeId"],
-                            AssigneeName = reader.IsDBNull(reader.GetOrdinal("AssigneeName")) ? null : reader["AssigneeName"].ToString()
-                        });
-                    }
-                }
-                Console.WriteLine($"[BOARD] Loaded {stories.Count} stories");
-
-                // Get project members
-                var members = new List<ProjectMemberDto>();
-                var membersSql = @"
-                    SELECT DISTINCT u.Id, u.Name, u.Email, u.Role
-                    FROM Users u
-                    WHERE u.Id IN (
-                        SELECT ProductOwnerId FROM Projects WHERE Id = @ProjectId AND ProductOwnerId IS NOT NULL
-                        UNION
-                        SELECT ScrumMasterId FROM Projects WHERE Id = @ProjectId AND ScrumMasterId IS NOT NULL
-                        UNION  
-                        SELECT CreatedBy FROM UserStories WHERE ProjectId = @ProjectId AND CreatedBy IS NOT NULL
-                    )";
-
-                using (var cmd = new SqlCommand(membersSql, conn))
-                {
-                    cmd.Parameters.AddWithValue("@ProjectId", projectId);
-                    using var reader = await cmd.ExecuteReaderAsync();
-                    while (await reader.ReadAsync())
-                    {
-                        members.Add(new ProjectMemberDto
-                        {
-                            Id = (Guid)reader["Id"],
-                            Name = reader["Name"].ToString()!,
-                            Email = reader["Email"].ToString()!,
-                            Role = reader["Role"].ToString()!
-                        });
-                    }
-                }
-                Console.WriteLine($"[BOARD] Loaded {members.Count} members");
-                foreach (var m in members) {
-                    Console.WriteLine($"[BOARD] Member: {m.Name} ({m.Role})");
+                    return Results.NotFound();
                 }
 
-                return Results.Ok(new BoardDataDto 
-                { 
-                    Stories = stories, 
-                    Members = members 
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[BOARD] Error: {ex.Message}");
-                return Results.Problem($"Error loading board: {ex.Message}");
+                story.SprintId = sprintId;
+                story.Status = "SprintBacklog";
+                story.UpdatedAt = DateTime.UtcNow;
+                store.Save();
+
+                return Results.Ok(new { message = "Historia movida al sprint" });
             }
         });
 
-        // Update story status (for drag & drop)
-        group.MapPut("/{id:guid}/status", async (Guid id, UpdateStatusRequest request, DatabaseContext db) =>
+        group.MapDelete("/{id}", (string id, AppDataStore store) =>
         {
-            try
+            lock (store.SyncRoot)
             {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
+                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
+                if (story is null)
+                {
+                    return Results.NotFound();
+                }
 
-                var sql = "UPDATE UserStories SET Status = @Status WHERE Id = @Id";
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Status", request.Status);
-                cmd.Parameters.AddWithValue("@Id", id);
-
-                var affected = await cmd.ExecuteNonQueryAsync();
-                if (affected == 0) return Results.NotFound();
-
-                return Results.Ok(new { message = "Status actualizado" });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error updating status: {ex.Message}");
+                store.Data.UserStories.Remove(story);
+                store.Data.Tasks.RemoveAll(task => task.StoryId == id);
+                store.Save();
+                return Results.Ok(new { message = "Historia eliminada" });
             }
         });
     }
 
-    private static UserStoryDto MapUserStoryDto(SqlDataReader reader)
+    private static UserStoryDto ToStoryDto(UserStory story, AppDataStore store)
     {
+        var tasks = store.Data.Tasks
+            .Where(task => task.StoryId == story.Id)
+            .Select(task =>
+            {
+                var assignedUser = store.Data.Users.FirstOrDefault(user => user.Id == task.AssignedToId);
+                return new TaskItemDto
+                {
+                    Id = task.Id,
+                    StoryId = task.StoryId,
+                    Title = task.Title,
+                    Description = task.Description,
+                    EstimatedHours = task.EstimatedHours,
+                    ActualHours = task.ActualHours,
+                    Status = task.Status,
+                    AssignedToId = task.AssignedToId,
+                    AssignedToName = assignedUser?.Name,
+                    StoryTitle = story.Title,
+                    CreatedAt = task.CreatedAt,
+                    CompletedAt = task.CompletedAt
+                };
+            })
+            .ToList();
+
         return new UserStoryDto
         {
-            Id = (Guid)reader["Id"],
-            ProjectId = (Guid)reader["ProjectId"],
-            SprintId = reader.IsDBNull(reader.GetOrdinal("SprintId")) ? null : (Guid)reader["SprintId"],
-            Title = reader["Title"].ToString()!,
-            Description = reader.IsDBNull(reader.GetOrdinal("Description")) ? null : reader["Description"].ToString(),
-            AcceptanceCriteria = reader.IsDBNull(reader.GetOrdinal("AcceptanceCriteria")) ? null : reader["AcceptanceCriteria"].ToString(),
-            StoryPoints = reader.IsDBNull(reader.GetOrdinal("StoryPoints")) ? null : (int)reader["StoryPoints"],
-            Priority = (int)reader["Priority"],
-            Status = Enum.Parse<StoryStatus>(reader["Status"].ToString()!),
-            CreatedBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy")) ? null : (Guid)reader["CreatedBy"],
-            CreatedAt = (DateTime)reader["CreatedAt"],
-            TaskCount = reader.GetColumnSchema().Any(c => c.ColumnName == "TaskCount") ? (int)reader["TaskCount"] : 0,
-            CompletedTaskCount = reader.GetColumnSchema().Any(c => c.ColumnName == "CompletedTaskCount") ? (int)reader["CompletedTaskCount"] : 0,
-            Tasks = new List<TaskItemDto>()
-        };
-    }
-
-    private static TaskItemDto MapTaskItemDto(SqlDataReader reader)
-    {
-        return new TaskItemDto
-        {
-            Id = (Guid)reader["Id"],
-            StoryId = (Guid)reader["StoryId"],
-            Title = reader["Title"].ToString()!,
-            Description = reader["Description"]?.ToString(),
-            EstimatedHours = reader["EstimatedHours"] as int?,
-            ActualHours = (int)(reader["ActualHours"] ?? 0),
-            Status = Enum.Parse<Models.TaskStatus>(reader["Status"].ToString()),
-            AssignedTo = reader["AssignedTo"] as Guid?,
-            AssignedToName = reader["AssignedToName"]?.ToString(),
-            CreatedAt = (DateTime)reader["CreatedAt"],
-            CompletedAt = reader["CompletedAt"] as DateTime?
+            Id = story.Id,
+            ProjectId = story.ProjectId,
+            SprintId = story.SprintId,
+            Title = story.Title,
+            Description = story.Description,
+            AcceptanceCriteria = story.AcceptanceCriteria,
+            Key = story.Key,
+            Status = story.Status,
+            Priority = story.Priority,
+            StoryPoints = story.StoryPoints,
+            Type = story.Type,
+            AssigneeId = story.AssigneeId,
+            CreatedById = story.CreatedById,
+            CreatedAt = story.CreatedAt,
+            UpdatedAt = story.UpdatedAt,
+            TaskCount = tasks.Count,
+            CompletedTaskCount = tasks.Count(task => task.Status == "Done"),
+            Tasks = tasks
         };
     }
 }

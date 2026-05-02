@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+using ScrumSystem.Api.Data;
 using ScrumSystem.Api.Models;
 
 namespace ScrumSystem.Api.Routes;
@@ -9,284 +9,169 @@ public static class SprintRoutes
     {
         var group = app.MapGroup("/api/sprints");
 
-        // Get all sprints
-        group.MapGet("/", async (DatabaseContext db) =>
+        group.MapGet("/", (AppDataStore store) =>
         {
-            var sprints = new List<SprintDto>();
-
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            var sql = @"
-                SELECT s.*,
-                    ISNULL((SELECT SUM(StoryPoints) FROM UserStories WHERE SprintId = s.Id), 0) as TotalStoryPoints,
-                    ISNULL((SELECT SUM(StoryPoints) FROM UserStories WHERE SprintId = s.Id AND Status = 'Done'), 0) as CompletedStoryPoints,
-                    (SELECT COUNT(*) FROM Tasks t JOIN UserStories us ON t.StoryId = us.Id WHERE us.SprintId = s.Id) as TotalTasks,
-                    (SELECT COUNT(*) FROM Tasks t JOIN UserStories us ON t.StoryId = us.Id WHERE us.SprintId = s.Id AND t.Status = 'Done') as CompletedTasks
-                FROM Sprints s
-                ORDER BY s.StartDate DESC";
-
-            using var cmd = new SqlCommand(sql, conn);
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
+            lock (store.SyncRoot)
             {
-                sprints.Add(new SprintDto
-                {
-                    Id = (Guid)reader["Id"],
-                    ProjectId = (Guid)reader["ProjectId"],
-                    Name = reader["Name"].ToString()!,
-                    Goal = reader["Goal"]?.ToString(),
-                    StartDate = (DateTime)reader["StartDate"],
-                    EndDate = (DateTime)reader["EndDate"],
-                    Status = reader["Status"].ToString()!,
-                    CreatedAt = (DateTime)reader["CreatedAt"],
-                    TotalStoryPoints = (int)reader["TotalStoryPoints"],
-                    CompletedStoryPoints = (int)reader["CompletedStoryPoints"],
-                    TotalTasks = (int)reader["TotalTasks"],
-                    CompletedTasks = (int)reader["CompletedTasks"]
-                });
+                return Results.Ok(store.Data.Sprints
+                    .OrderByDescending(sprint => sprint.CreatedAt)
+                    .Select(sprint => ToSprintDto(sprint, store))
+                    .ToList());
             }
-
-            return Results.Ok(sprints);
         });
 
-        // Create sprint
-        group.MapPost("/", async (CreateSprintRequest request, DatabaseContext db) =>
+        group.MapGet("/{id}", (string id, AppDataStore store) =>
         {
-            try
+            lock (store.SyncRoot)
             {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
+                var sprint = store.Data.Sprints.FirstOrDefault(item => item.Id == id);
+                return sprint is null ? Results.NotFound() : Results.Ok(ToSprintDto(sprint, store));
+            }
+        });
 
-                var id = Guid.NewGuid();
+        group.MapGet("/project/{projectId}", (string projectId, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                return Results.Ok(store.Data.Sprints
+                    .Where(sprint => sprint.ProjectId == projectId)
+                    .OrderByDescending(sprint => sprint.StartDate)
+                    .Select(sprint => ToSprintDto(sprint, store))
+                    .ToList());
+            }
+        });
 
-                var sql = @"
-                    INSERT INTO Sprints (Id, ProjectId, Name, Goal, StartDate, EndDate)
-                    VALUES (@Id, @ProjectId, @Name, @Goal, @StartDate, @EndDate)";
-
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Id", id);
-                cmd.Parameters.AddWithValue("@ProjectId", request.ProjectId);
-                cmd.Parameters.AddWithValue("@Name", request.Name);
-                cmd.Parameters.AddWithValue("@Goal", (object?)request.Goal ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@StartDate", request.StartDate);
-                cmd.Parameters.AddWithValue("@EndDate", request.EndDate);
-
-                await cmd.ExecuteNonQueryAsync();
-
-                return Results.Created($"/api/sprints/{id}", new Sprint
+        group.MapGet("/{id}/burndown", (string id, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var sprint = store.Data.Sprints.FirstOrDefault(item => item.Id == id);
+                if (sprint is null)
                 {
-                    Id = id,
+                    return Results.NotFound();
+                }
+
+                var stories = store.Data.UserStories
+                    .Where(story => story.SprintId == id)
+                    .ToList();
+
+                var startDate = sprint.StartDate.Date;
+                var endDate = sprint.EndDate.Date < startDate ? startDate : sprint.EndDate.Date;
+                var totalPoints = stories.Sum(story => story.StoryPoints ?? 0);
+                var totalDays = Math.Max(1, (endDate - startDate).Days);
+
+                var chart = new BurndownChartDto();
+                for (var date = startDate; date <= endDate; date = date.AddDays(1))
+                {
+                    chart.Labels.Add(date.ToString("dd/MM"));
+                    var elapsedDays = (date - startDate).Days;
+                    var idealRemaining = totalPoints - ((decimal)totalPoints * elapsedDays / totalDays);
+                    chart.Ideal.Add(Math.Max(0, Math.Round(idealRemaining, 2)));
+
+                    var remaining = stories
+                        .Where(story => story.Status != "Done" || !story.UpdatedAt.HasValue || story.UpdatedAt.Value.Date > date)
+                        .Sum(story => story.StoryPoints ?? 0);
+
+                    chart.Actual.Add(remaining);
+                }
+
+                return Results.Ok(chart);
+            }
+        });
+
+        group.MapPost("/", (CreateSprintRequest request, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                if (store.Data.Projects.All(project => project.Id != request.ProjectId))
+                {
+                    return Results.BadRequest("El proyecto no existe");
+                }
+
+                var sprint = new Sprint
+                {
+                    Id = Guid.NewGuid().ToString(),
                     ProjectId = request.ProjectId,
-                    Name = request.Name,
-                    Goal = request.Goal,
+                    Name = request.Name.Trim(),
+                    Goal = request.Goal?.Trim(),
                     StartDate = request.StartDate,
                     EndDate = request.EndDate,
-                    Status = SprintStatus.Planning,
+                    DurationWeeks = Math.Max(1, (int)Math.Ceiling((request.EndDate.Date - request.StartDate.Date).TotalDays / 7d)),
+                    Status = "Planning",
                     CreatedAt = DateTime.UtcNow
-                });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error creating sprint: {ex.Message}");
+                };
+
+                store.Data.Sprints.Add(sprint);
+                store.Save();
+                return Results.Created($"/api/sprints/{sprint.Id}", ToSprintDto(sprint, store));
             }
         });
 
-        // Get sprints by project
-        group.MapGet("/project/{projectId:guid}", async (Guid projectId, DatabaseContext db) =>
+        group.MapPut("/{id}", (string id, UpdateStatusRequest request, AppDataStore store) =>
         {
-            var sprints = new List<SprintDto>();
-
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            var sql = @"
-                SELECT s.*,
-                    ISNULL((SELECT SUM(StoryPoints) FROM UserStories WHERE SprintId = s.Id), 0) as TotalStoryPoints,
-                    ISNULL((SELECT SUM(StoryPoints) FROM UserStories WHERE SprintId = s.Id AND Status = 'Done'), 0) as CompletedStoryPoints,
-                    (SELECT COUNT(*) FROM Tasks t JOIN UserStories us ON t.StoryId = us.Id WHERE us.SprintId = s.Id) as TotalTasks,
-                    (SELECT COUNT(*) FROM Tasks t JOIN UserStories us ON t.StoryId = us.Id WHERE us.SprintId = s.Id AND t.Status = 'Done') as CompletedTasks
-                FROM Sprints s
-                WHERE s.ProjectId = @ProjectId
-                ORDER BY s.StartDate DESC";
-
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@ProjectId", projectId);
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
+            lock (store.SyncRoot)
             {
-                sprints.Add(new SprintDto
+                var sprint = store.Data.Sprints.FirstOrDefault(item => item.Id == id);
+                if (sprint is null)
                 {
-                    Id = (Guid)reader["Id"],
-                    ProjectId = (Guid)reader["ProjectId"],
-                    Name = reader["Name"].ToString()!,
-                    Goal = reader["Goal"]?.ToString(),
-                    StartDate = (DateTime)reader["StartDate"],
-                    EndDate = (DateTime)reader["EndDate"],
-                    Status = reader["Status"].ToString()!,
-                    CreatedAt = (DateTime)reader["CreatedAt"],
-                    TotalStoryPoints = (int)reader["TotalStoryPoints"],
-                    CompletedStoryPoints = (int)reader["CompletedStoryPoints"],
-                    TotalTasks = (int)reader["TotalTasks"],
-                    CompletedTasks = (int)reader["CompletedTasks"]
-                });
-            }
-
-            return Results.Ok(sprints);
-        });
-
-        // Get sprint by ID
-        group.MapGet("/{id:guid}", async (Guid id, DatabaseContext db) =>
-        {
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            var sql = "SELECT * FROM Sprints WHERE Id = @Id";
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@Id", id);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-            if (!await reader.ReadAsync())
-            {
-                return Results.NotFound();
-            }
-
-            return Results.Ok(MapSprint(reader));
-        });
-
-        // Update sprint status
-        group.MapPatch("/{id:guid}/status", async (Guid id, UpdateStatusRequest request, DatabaseContext db) =>
-        {
-            try
-            {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                var sql = "UPDATE Sprints SET Status = @Status WHERE Id = @Id";
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Status", request.Status);
-                cmd.Parameters.AddWithValue("@Id", id);
-
-                await cmd.ExecuteNonQueryAsync();
-                return Results.Ok(new { message = "Status updated" });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error updating status: {ex.Message}");
-            }
-        });
-
-        // Get burndown data (calculated dynamically)
-        group.MapGet("/{id:guid}/burndown", async (Guid id, DatabaseContext db) =>
-        {
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            // Get sprint info
-            var sprintSql = "SELECT * FROM Sprints WHERE Id = @Id";
-            using var sprintCmd = new SqlCommand(sprintSql, conn);
-            sprintCmd.Parameters.AddWithValue("@Id", id);
-            using var sprintReader = await sprintCmd.ExecuteReaderAsync();
-
-            if (!await sprintReader.ReadAsync())
-            {
-                return Results.NotFound();
-            }
-
-            var sprint = MapSprint(sprintReader);
-            sprintReader.Close();
-
-            // Calculate total story points for the sprint
-            var totalPointsSql = @"
-                SELECT ISNULL(SUM(StoryPoints), 0) as TotalPoints
-                FROM UserStories 
-                WHERE SprintId = @SprintId";
-            
-            using var pointsCmd = new SqlCommand(totalPointsSql, conn);
-            pointsCmd.Parameters.AddWithValue("@SprintId", id);
-            var totalPoints = (int)(await pointsCmd.ExecuteScalarAsync() ?? 0);
-
-            // Calculate days in sprint
-            var totalDays = (int)(sprint.EndDate - sprint.StartDate).TotalDays + 1;
-            var daysPassed = Math.Min((int)(DateTime.UtcNow - sprint.StartDate).TotalDays + 1, totalDays);
-            
-            // Generate labels (Day 1, Day 2, etc.)
-            var labels = new List<string>();
-            for (int i = 1; i <= totalDays; i++)
-            {
-                labels.Add($"Day {i}");
-            }
-
-            // Generate ideal burndown line
-            var ideal = new List<int>();
-            for (int i = 0; i <= totalDays; i++)
-            {
-                ideal.Add((int)(totalPoints * (1 - (double)i / totalDays)));
-            }
-
-            // Calculate actual burndown based on completed tasks
-            var actual = new List<int>();
-            var completedPointsSql = @"
-                SELECT 
-                    DATEDIFF(day, s.StartDate, t.CompletedAt) as DayIndex,
-                    ISNULL(SUM(us.StoryPoints), 0) as Points
-                FROM Tasks t
-                JOIN UserStories us ON t.StoryId = us.Id
-                JOIN Sprints s ON us.SprintId = s.Id
-                WHERE us.SprintId = @SprintId 
-                    AND t.Status = 'Done'
-                    AND t.CompletedAt IS NOT NULL
-                GROUP BY DATEDIFF(day, s.StartDate, t.CompletedAt)
-                ORDER BY DayIndex";
-            
-            using var completedCmd = new SqlCommand(completedPointsSql, conn);
-            completedCmd.Parameters.AddWithValue("@SprintId", id);
-            using var completedReader = await completedCmd.ExecuteReaderAsync();
-            
-            var completedByDay = new Dictionary<int, int>();
-            while (await completedReader.ReadAsync())
-            {
-                var dayIndex = (int)completedReader["DayIndex"];
-                var points = (int)completedReader["Points"];
-                completedByDay[dayIndex] = points;
-            }
-            completedReader.Close();
-
-            // Build actual burndown line
-            var currentRemaining = totalPoints;
-            for (int i = 0; i <= totalDays; i++)
-            {
-                if (completedByDay.ContainsKey(i))
-                {
-                    currentRemaining -= completedByDay[i];
+                    return Results.NotFound();
                 }
-                actual.Add(Math.Max(0, currentRemaining));
-            }
 
-            return Results.Ok(new { 
-                labels, 
-                ideal, 
-                actual,
-                totalPoints,
-                sprintName = sprint.Name
-            });
+                sprint.Status = string.IsNullOrWhiteSpace(request.Status) ? sprint.Status : request.Status;
+                sprint.UpdatedAt = DateTime.UtcNow;
+                store.Save();
+
+                return Results.Ok(new { message = "Sprint actualizado" });
+            }
+        });
+
+        group.MapDelete("/{id}", (string id, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var sprint = store.Data.Sprints.FirstOrDefault(item => item.Id == id);
+                if (sprint is null)
+                {
+                    return Results.NotFound();
+                }
+
+                foreach (var story in store.Data.UserStories.Where(story => story.SprintId == id))
+                {
+                    story.SprintId = null;
+                    story.Status = "Backlog";
+                    story.UpdatedAt = DateTime.UtcNow;
+                }
+
+                store.Data.StandupNotes.RemoveAll(note => note.SprintId == id);
+                store.Data.Sprints.Remove(sprint);
+                store.Save();
+                return Results.Ok(new { message = "Sprint eliminado" });
+            }
         });
     }
 
-    private static Sprint MapSprint(SqlDataReader reader)
+    private static SprintDto ToSprintDto(Sprint sprint, AppDataStore store)
     {
-        return new Sprint
+        var sprintStories = store.Data.UserStories.Where(story => story.SprintId == sprint.Id).ToList();
+        var sprintStoryIds = sprintStories.Select(story => story.Id).ToHashSet();
+        var sprintTasks = store.Data.Tasks.Where(task => sprintStoryIds.Contains(task.StoryId)).ToList();
+
+        return new SprintDto
         {
-            Id = (Guid)reader["Id"],
-            ProjectId = (Guid)reader["ProjectId"],
-            Name = reader["Name"].ToString()!,
-            Goal = reader["Goal"]?.ToString(),
-            StartDate = (DateTime)reader["StartDate"],
-            EndDate = (DateTime)reader["EndDate"],
-            Status = Enum.Parse<SprintStatus>(reader["Status"].ToString()!),
-            CreatedAt = (DateTime)reader["CreatedAt"]
+            Id = sprint.Id,
+            ProjectId = sprint.ProjectId,
+            Name = sprint.Name,
+            Goal = sprint.Goal,
+            StartDate = sprint.StartDate,
+            EndDate = sprint.EndDate,
+            DurationWeeks = sprint.DurationWeeks,
+            Status = sprint.Status,
+            CreatedAt = sprint.CreatedAt,
+            UpdatedAt = sprint.UpdatedAt,
+            TotalStoryPoints = sprintStories.Sum(story => story.StoryPoints ?? 0),
+            CompletedStoryPoints = sprintStories.Where(story => story.Status == "Done").Sum(story => story.StoryPoints ?? 0),
+            TotalTasks = sprintTasks.Count,
+            CompletedTasks = sprintTasks.Count(task => task.Status == "Done")
         };
     }
 }

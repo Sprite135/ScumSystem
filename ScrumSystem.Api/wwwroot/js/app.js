@@ -1404,9 +1404,10 @@ async function loadBacklog() {
     
     try {
         console.log('Fetching stories for project:', selectedProjectId);
-        const data = await apiRequest(`/api/stories/project/${selectedProjectId}/backlog`);
-        console.log('Data received:', data);
-        renderProjectBacklog(data.stories || [], data.members || []);
+        const stories = await apiRequest(`/api/stories/project/${selectedProjectId}/backlog`);
+        const project = projects.find(p => p.id === selectedProjectId);
+        console.log('Stories received:', stories);
+        renderProjectBacklog(stories || [], project?.members || []);
     } catch (error) {
         console.error('Error loading project backlog:', error);
         content.innerHTML = '<p class="empty-state">Error al cargar backlog</p>';
@@ -1475,7 +1476,7 @@ function renderProjectBacklog(stories, members) {
                             <div class="backlog-badge inprogress" title="En curso">${inProgressPoints}</div>
                             <div class="backlog-badge done" title="Hecho">${donePoints}</div>
                         </div>
-                        <button type="button" class="create-sprint-btn" onclick="showStartSprintModal(${stories.length})" ${stories.length === 0 ? 'disabled' : ''}>Iniciar sprint</button>
+                        <button type="button" class="create-sprint-btn" onclick="showStartSprintModal(${stories.length}, 'Sprint 1')" ${stories.length === 0 ? 'disabled' : ''}>Iniciar sprint</button>
                         <div class="sprint-menu-container">
                             <button type="button" class="sprint-menu-btn" onclick="toggleSprintOptionsMenu(event, 'sprint-1')" title="Más opciones">
                                 <svg fill="none" viewBox="0 0 16 16" role="presentation">
@@ -1748,7 +1749,7 @@ function toggleStoryStatusMenu(event, storyId) {
     menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
 }
 
-function changeStoryStatus(storyId, newStatus) {
+async function changeStoryStatus(storyId, newStatus) {
     // Close the menu
     const menu = document.getElementById(`story-status-menu-${storyId}`);
     if (menu) menu.style.display = 'none';
@@ -1761,18 +1762,18 @@ function changeStoryStatus(storyId, newStatus) {
         'SprintBacklog': 'SPRINT BACKLOG'
     };
     
-    const card = document.querySelector(`[data-story-id="${storyId}"]`);
-    if (card) {
-        const badge = card.querySelector('.story-status-badge');
-        if (badge) {
-            badge.innerHTML = `${statusLabels[newStatus]} <i class="fas fa-chevron-down" style="margin-left: 6px; font-size: 10px;"></i>`;
-        }
+    try {
+        await apiRequest(`/api/stories/${storyId}/status`, {
+            method: 'PUT',
+            body: JSON.stringify({ status: newStatus })
+        });
+
+        showToast(`Estado actualizado a: ${statusLabels[newStatus]}`, 'success');
+        await loadBacklog();
+    } catch (error) {
+        console.error('Error updating story status:', error);
+        showToast('Error al actualizar estado', 'error');
     }
-    
-    showToast(`Estado actualizado a: ${statusLabels[newStatus]}`, 'success');
-    
-    // Here you would also make an API call to persist the change
-    // apiRequest(`/api/stories/${storyId}/status`, { method: 'PUT', body: JSON.stringify({ status: newStatus }) });
 }
 
 // Close status menus when clicking outside
@@ -1803,7 +1804,7 @@ function toggleStoryActionsMenu(event, storyId) {
     menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
 }
 
-function deleteBacklogStory(storyId) {
+async function deleteBacklogStory(storyId) {
     // Close the menu
     const menu = document.getElementById(`story-actions-menu-${storyId}`);
     if (menu) menu.style.display = 'none';
@@ -1813,22 +1814,17 @@ function deleteBacklogStory(storyId) {
         return;
     }
     
-    // Remove the story card from the UI
-    const card = document.querySelector(`[data-story-id="${storyId}"]`);
-    if (card) {
-        card.remove();
+    try {
+        await apiRequest(`/api/stories/${storyId}`, { method: 'DELETE' });
         showToast('Historia eliminada', 'success');
-        updateActivityCount();
-        
-        // Update the start sprint button state
-        updateStartSprintButtonState();
+        await loadBacklog();
+    } catch (error) {
+        console.error('Error deleting story:', error);
+        showToast('Error al eliminar historia', 'error');
     }
-    
-    // Here you would also make an API call to delete from backend
-    // apiRequest(`/api/stories/${storyId}`, { method: 'DELETE' });
 }
 
-function editStorySummary(storyId) {
+async function editStorySummary(storyId) {
     const card = document.querySelector(`[data-story-id="${storyId}"]`);
     if (!card) return;
     
@@ -1839,11 +1835,29 @@ function editStorySummary(storyId) {
     const newTitle = prompt('Editar resumen de la historia:', currentTitle);
     
     if (newTitle !== null && newTitle.trim() !== '') {
-        titleSpan.textContent = newTitle;
-        showToast('Resumen actualizado', 'success');
-        
-        // Here you would also make an API call to update the story
-        // apiRequest(`/api/stories/${storyId}`, { method: 'PUT', body: JSON.stringify({ title: newTitle }) });
+        try {
+            const existingStory = await apiRequest(`/api/stories/${storyId}`);
+            await apiRequest(`/api/stories/${storyId}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    projectId: existingStory.projectId,
+                    sprintId: existingStory.sprintId,
+                    title: newTitle.trim(),
+                    description: existingStory.description || '',
+                    acceptanceCriteria: existingStory.acceptanceCriteria || '',
+                    storyPoints: existingStory.storyPoints || 0,
+                    priority: existingStory.priority || 2,
+                    assigneeId: existingStory.assigneeId,
+                    status: existingStory.status
+                })
+            });
+
+            showToast('Resumen actualizado', 'success');
+            await loadBacklog();
+        } catch (error) {
+            console.error('Error updating story title:', error);
+            showToast('Error al actualizar historia', 'error');
+        }
     }
 }
 
@@ -1934,7 +1948,7 @@ function hideCreateStoryFormBacklog() {
     }
 }
 
-function createBacklogStory() {
+async function createBacklogStory() {
     const titleInput = document.getElementById('backlog-new-story-title');
     const title = titleInput.value.trim();
     
@@ -1943,62 +1957,35 @@ function createBacklogStory() {
         return;
     }
     
-    // Get project key
-    const project = projects.find(p => p.id === selectedProjectId);
-    let projectKey;
-    if (project) {
-        if (project.key) {
-            projectKey = project.key;
-        } else {
-            const nameParts = project.name.split(' ');
-            if (nameParts.length > 1) {
-                projectKey = nameParts.map(p => p[0]).join('').toUpperCase().substring(0, 4);
-            } else {
-                projectKey = project.name.substring(0, 4).toUpperCase();
-            }
-        }
-    } else {
-        projectKey = 'PROJ';
+    try {
+        await apiRequest('/api/stories', {
+            method: 'POST',
+            body: JSON.stringify({
+                projectId: selectedProjectId,
+                sprintId: null,
+                title,
+                description: '',
+                acceptanceCriteria: '',
+                storyPoints: 0,
+                priority: 2
+            })
+        });
+
+        showToast('Historia creada: ' + title, 'success');
+        hideCreateStoryFormBacklog();
+        await loadBacklog();
+    } catch (error) {
+        console.error('Error creating backlog story:', error);
+        showToast('Error al crear historia', 'error');
     }
-    
-    // Create new story object
-    const newStory = {
-        id: 'story-' + Date.now(),
-        title: title,
-        key: 'PROYEC-' + Math.floor(Math.random() * 1000),
-        status: 'Backlog',
-        priority: 2,
-        storyPoints: null,
-        assigneeId: null,
-        description: '',
-        createdAt: new Date().toISOString()
-    };
-    
-    // Add story to the backlog content
-    const backlogContent = document.getElementById('backlog-content');
-    const createContainer = document.getElementById('backlog-create-container');
-    
-    if (backlogContent && createContainer) {
-        const storyCardHTML = createBacklogStoryCard(newStory, [], projectKey);
-        if (storyCardHTML) {
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = storyCardHTML;
-            const storyCard = tempDiv.firstElementChild;
-            
-            // Move create container after the new story
-            backlogContent.appendChild(storyCard);
-            backlogContent.appendChild(createContainer);
-        }
-    }
-    
-    showToast('Historia creada: ' + title, 'success');
-    hideCreateStoryFormBacklog();
-    
-    // Update activity count
-    updateActivityCount();
 }
 
 function createSprintFromBacklog() {
+    const backlogStories = document.querySelectorAll('#backlog-content .backlog-story-card');
+    const sprintName = `Sprint ${nextSprintNumber++}`;
+    showStartSprintModal(backlogStories.length, sprintName);
+    return;
+
     const backlogContainer = document.querySelector('.backlog-container');
     if (!backlogContainer) return;
     
@@ -2035,7 +2022,7 @@ function createSprintFromBacklog() {
                     <div class="backlog-badge inprogress" title="En curso">0</div>
                     <div class="backlog-badge done" title="Hecho">0</div>
                 </div>
-                <button type="button" class="create-sprint-btn" onclick="showStartSprintModal(0)" disabled>Iniciar sprint</button>
+                <button type="button" class="create-sprint-btn" onclick="showStartSprintModal(0, 'Sprint ${sprintNumber}')" disabled>Iniciar sprint</button>
                 <div class="sprint-menu-container">
                     <button type="button" class="sprint-menu-btn" onclick="alert('Boton 3 puntos clickeado: ${sprintId}'); toggleSprintOptionsMenu(event, '${sprintId}');" title="Más opciones">
                         <svg fill="none" viewBox="0 0 16 16" role="presentation">
@@ -2180,7 +2167,7 @@ function hideCreateStoryFormForSprint(sprintId) {
     }
 }
 
-function createStoryForSprint(sprintId) {
+async function createStoryForSprint(sprintId) {
     // For Sprint 1, the ID is different (no suffix)
     const inputId = sprintId === 'sprint-1' ? 'new-story-title' : `new-story-title-${sprintId}`;
     const titleInput = document.getElementById(inputId);
@@ -2191,57 +2178,27 @@ function createStoryForSprint(sprintId) {
         return;
     }
     
-    // Get project key
-    const project = projects.find(p => p.id === selectedProjectId);
-    let projectKey;
-    if (project) {
-        if (project.key) {
-            projectKey = project.key;
-        } else {
-            const nameParts = project.name.split(' ');
-            if (nameParts.length > 1) {
-                projectKey = nameParts.map(p => p[0]).join('').toUpperCase().substring(0, 4);
-            } else {
-                projectKey = project.name.substring(0, 4).toUpperCase();
-            }
-        }
-    } else {
-        projectKey = 'PROJ';
+    try {
+        await apiRequest('/api/stories', {
+            method: 'POST',
+            body: JSON.stringify({
+                projectId: selectedProjectId,
+                sprintId: null,
+                title,
+                description: '',
+                acceptanceCriteria: '',
+                storyPoints: 0,
+                priority: 2
+            })
+        });
+
+        showToast('Historia creada: ' + title, 'success');
+        hideCreateStoryFormForSprint(sprintId);
+        await loadBacklog();
+    } catch (error) {
+        console.error('Error creating sprint story:', error);
+        showToast('Error al crear historia', 'error');
     }
-    
-    // Create new story object
-    const newStory = {
-        id: 'story-' + Date.now(),
-        title: title,
-        key: 'PROYEC-' + Math.floor(Math.random() * 1000),
-        status: 'Backlog',
-        priority: 2,
-        storyPoints: null,
-        assigneeId: null,
-        description: '',
-        createdAt: new Date().toISOString()
-    };
-    
-    // Add story to the sprint content
-    const sprintContent = document.getElementById(`sprint-content-${sprintId}`);
-    
-    if (sprintContent) {
-        const storyCardHTML = createBacklogStoryCard(newStory, [], projectKey);
-        if (storyCardHTML) {
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = storyCardHTML;
-            const storyCard = tempDiv.firstElementChild;
-            
-            // Append to sprint content
-            sprintContent.appendChild(storyCard);
-        }
-    }
-    
-    showToast('Historia creada: ' + title, 'success');
-    hideCreateStoryFormForSprint(sprintId);
-    
-    // Update activity count
-    updateActivityCount();
 }
 
 function toggleSprintOptionsMenu(event, sprintId) {
@@ -2461,7 +2418,9 @@ function deleteSprint(sprintId) {
     updateActivityCount();
 }
 
-function showStartSprintModal(activitiesCount) {
+function showStartSprintModal(activitiesCount, sprintName = '') {
+    console.log('showStartSprintModal called with:', { activitiesCount, sprintName });
+    
     const modal = document.getElementById('start-sprint-modal');
     const countElement = document.getElementById('sprint-activities-count');
     
@@ -2476,8 +2435,35 @@ function showStartSprintModal(activitiesCount) {
             startDateInput.value = today;
         }
         
-        // Reset form
-        document.getElementById('start-sprint-form').reset();
+        // Reset form only if no sprint name provided
+        if (!sprintName) {
+            document.getElementById('start-sprint-form').reset();
+        }
+        
+        // Set sprint name if provided (do this last to avoid being overwritten)
+        if (sprintName) {
+            console.log('Setting sprint name to:', sprintName);
+            const sprintNameInput = document.getElementById('sprint-name');
+            if (sprintNameInput) {
+                console.log('Found sprint name input:', sprintNameInput);
+                
+                // Set value with longer delay to ensure DOM is ready
+                setTimeout(() => {
+                    sprintNameInput.value = sprintName;
+                    sprintNameInput.focus();
+                    sprintNameInput.select();
+                    
+                    // Double-check and force the value
+                    if (sprintNameInput.value !== sprintName) {
+                        sprintNameInput.value = sprintName;
+                    }
+                    
+                    console.log('Final value check:', sprintNameInput.value);
+                }, 200);
+            } else {
+                console.log('Sprint name input not found!');
+            }
+        }
     }
 }
 
@@ -2496,7 +2482,7 @@ function calculateEndDate() {
     }
 }
 
-function submitStartSprint() {
+async function submitStartSprint() {
     const name = document.getElementById('sprint-name').value.trim();
     const duration = document.getElementById('sprint-duration').value;
     const startDate = document.getElementById('sprint-start-date').value;
@@ -2508,17 +2494,31 @@ function submitStartSprint() {
         return;
     }
     
-    // Here you would make an API call to create the sprint
-    // apiRequest('/api/sprints', { method: 'POST', body: JSON.stringify({ name, duration, startDate, endDate, goal }) });
-    
-    showToast(`Sprint "${name}" iniciado correctamente`, 'success');
-    hideModal('start-sprint-modal');
-    
-    // Update the UI to show sprint is active
-    const startSprintBtn = document.querySelector('.start-sprint-btn');
-    if (startSprintBtn) {
-        startSprintBtn.textContent = 'Sprint en curso';
-        startSprintBtn.disabled = true;
+    try {
+        const sprint = await apiRequest('/api/sprints', {
+            method: 'POST',
+            body: JSON.stringify({
+                projectId: selectedProjectId,
+                name,
+                goal,
+                startDate,
+                endDate
+            })
+        });
+
+        const backlogStories = await apiRequest(`/api/stories/project/${selectedProjectId}/backlog`);
+        for (const story of backlogStories) {
+            await apiRequest(`/api/stories/${story.id}/move-to-sprint?sprintId=${encodeURIComponent(sprint.id)}`, {
+                method: 'POST'
+            });
+        }
+
+        showToast(`Sprint "${name}" iniciado correctamente`, 'success');
+        hideModal('start-sprint-modal');
+        await loadBacklog();
+    } catch (error) {
+        console.error('Error creating sprint:', error);
+        showToast('Error al iniciar sprint', 'error');
     }
 }
 
@@ -2660,17 +2660,25 @@ function createStory() {
 }
 
 function updateActivityCount() {
-    const sprintContent = document.getElementById('sprint-content');
-    const activityCountElements = document.querySelectorAll('.activity-count');
-    
-    if (sprintContent && activityCountElements.length > 0) {
-        const storyCards = sprintContent.querySelectorAll('.backlog-story-card');
-        const count = storyCards.length;
+    // Update all sprint sections
+    document.querySelectorAll('.sprint-section').forEach(sprintSection => {
+        const sprintContent = sprintSection.querySelector('.sprint-content, [id^="sprint-content-"]');
+        const activityCountElement = sprintSection.querySelector('.activity-count');
+        const startSprintBtn = sprintSection.querySelector('.create-sprint-btn');
         
-        activityCountElements.forEach(element => {
-            element.textContent = `(${count} actividades)`;
-        });
-    }
+        if (sprintContent && activityCountElement) {
+            const storyCards = sprintContent.querySelectorAll('.backlog-story-card');
+            const count = storyCards.length;
+            
+            // Update activity count text
+            activityCountElement.textContent = `(${count} actividades)`;
+            
+            // Update start sprint button state
+            if (startSprintBtn) {
+                startSprintBtn.disabled = count === 0;
+            }
+        }
+    });
 }
 
 // Add event listeners when create form is shown

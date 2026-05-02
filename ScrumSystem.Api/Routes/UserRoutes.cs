@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+using ScrumSystem.Api.Data;
 using ScrumSystem.Api.Models;
 
 namespace ScrumSystem.Api.Routes;
@@ -9,325 +9,206 @@ public static class UserRoutes
     {
         var group = app.MapGroup("/api/users");
 
-        // Register user (public endpoint)
-        group.MapPost("/register", async (RegisterRequest request, DatabaseContext db) =>
+        group.MapPost("/register", (RegisterRequest request, AppDataStore store) =>
         {
-            try
+            lock (store.SyncRoot)
             {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                // Check if email already exists
-                var checkSql = "SELECT COUNT(*) FROM Users WHERE Email = @Email";
-                using var checkCmd = new SqlCommand(checkSql, conn);
-                checkCmd.Parameters.AddWithValue("@Email", request.Email);
-                var count = (int)await checkCmd.ExecuteScalarAsync();
-
-                if (count > 0)
+                if (store.Data.Users.Any(u => u.Email.Equals(request.Email, StringComparison.OrdinalIgnoreCase)))
                 {
-                    return Results.Problem("El email ya está registrado", statusCode: 400);
+                    return Results.BadRequest("El email ya está registrado");
                 }
 
-                var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
-                var id = Guid.NewGuid();
-
-                var sql = @"
-                    INSERT INTO Users (Id, Name, Email, PasswordHash, Role, CreatedAt) 
-                    VALUES (@Id, @Name, @Email, @PasswordHash, @Role, @CreatedAt)";
-
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Id", id);
-                cmd.Parameters.AddWithValue("@Name", request.Name);
-                cmd.Parameters.AddWithValue("@Email", request.Email);
-                cmd.Parameters.AddWithValue("@PasswordHash", passwordHash);
-                cmd.Parameters.AddWithValue("@Role", "Developer");
-                cmd.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
-
-                await cmd.ExecuteNonQueryAsync();
-
-                // Simulate sending welcome email
-                Console.WriteLine($"[EMAIL] Welcome email sent to: {request.Email}");
-                Console.WriteLine($"[EMAIL] Subject: ¡Bienvenido a Scrum System!");
-                Console.WriteLine($"[EMAIL] Body: Hola {request.Name}, tu cuenta ha sido creada exitosamente.");
-
-                return Results.Ok(new { message = "Usuario registrado exitosamente", userId = id });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error al registrar usuario: {ex.Message}");
-            }
-        });
-
-        // Create user
-        group.MapPost("/", async (CreateUserRequest request, DatabaseContext db) =>
-        {
-            try
-            {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
-                var id = Guid.NewGuid();
-
-                var sql = @"
-                    INSERT INTO Users (Id, Name, Email, PasswordHash, Role) 
-                    VALUES (@Id, @Name, @Email, @PasswordHash, @Role)";
-
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Id", id);
-                cmd.Parameters.AddWithValue("@Name", request.Name);
-                cmd.Parameters.AddWithValue("@Email", request.Email);
-                cmd.Parameters.AddWithValue("@PasswordHash", passwordHash);
-                cmd.Parameters.AddWithValue("@Role", request.Role.ToString());
-
-                await cmd.ExecuteNonQueryAsync();
-
-                return Results.Created($"/api/users/{id}", new UserDto
+                var user = new User
                 {
-                    Id = id,
-                    Name = request.Name,
-                    Email = request.Email,
-                    Role = request.Role,
+                    Id = Guid.NewGuid().ToString(),
+                    Name = request.Name.Trim(),
+                    Email = request.Email.Trim(),
+                    PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                    Role = ParseRole(request.Role),
+                    Avatar = BuildAvatar(request.Name),
                     CreatedAt = DateTime.UtcNow
-                });
-            }
-            catch (SqlException ex) when (ex.Number == 2601 || ex.Number == 2627)
-            {
-                return Results.Problem("Email already exists", statusCode: 400);
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error creating user: {ex.Message}");
-            }
-        });
-
-        // Login
-        group.MapPost("/login", async (LoginRequest request, DatabaseContext db) =>
-        {
-            try
-            {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                var sql = "SELECT * FROM Users WHERE Email = @Email";
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Email", request.Email);
-
-                using var reader = await cmd.ExecuteReaderAsync();
-                if (!await reader.ReadAsync())
-                {
-                    return Results.Unauthorized();
-                }
-
-                var storedHash = reader["PasswordHash"].ToString()!;
-                if (!BCrypt.Net.BCrypt.Verify(request.Password, storedHash))
-                {
-                    return Results.Unauthorized();
-                }
-
-                var user = new UserDto
-                {
-                    Id = (Guid)reader["Id"],
-                    Name = reader["Name"].ToString()!,
-                    Email = reader["Email"].ToString()!,
-                    Role = Enum.Parse<UserRole>(reader["Role"].ToString()!),
-                    CreatedAt = (DateTime)reader["CreatedAt"]
                 };
 
-                return Results.Ok(user);
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Login error: {ex.Message}");
+                store.Data.Users.Add(user);
+                store.Save();
+
+                return Results.Ok(new { message = "Usuario registrado exitosamente", userId = user.Id });
             }
         });
 
-        // Get all users
-        group.MapGet("/", async (DatabaseContext db) =>
+        group.MapPost("/", (CreateUserRequest request, AppDataStore store) =>
         {
-            var users = new List<UserDto>();
-
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            var sql = @"
-                SELECT Id, Name, Email, Role, CreatedAt 
-                FROM Users 
-                ORDER BY Name";
-
-            using var cmd = new SqlCommand(sql, conn);
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
+            lock (store.SyncRoot)
             {
-                users.Add(new UserDto
+                if (store.Data.Users.Any(u => u.Email.Equals(request.Email, StringComparison.OrdinalIgnoreCase)))
                 {
-                    Id = (Guid)reader["Id"],
-                    Name = reader["Name"].ToString()!,
-                    Email = reader["Email"].ToString()!,
-                    Role = Enum.Parse<UserRole>(reader["Role"].ToString()!),
-                    CreatedAt = (DateTime)reader["CreatedAt"]
-                });
-            }
+                    return Results.BadRequest("Email already exists");
+                }
 
-            return Results.Ok(users);
+                var user = new User
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Name = request.Name.Trim(),
+                    Email = request.Email.Trim(),
+                    PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                    Role = request.Role,
+                    Avatar = BuildAvatar(request.Name),
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                store.Data.Users.Add(user);
+                store.Save();
+                return Results.Created($"/api/users/{user.Id}", ToUserDto(user));
+            }
         });
 
-        // Get user by ID
-        group.MapGet("/{id:guid}", async (Guid id, DatabaseContext db) =>
+        group.MapPost("/login", (LoginRequest request, AppDataStore store) =>
         {
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            var sql = @"
-                SELECT Id, Name, Email, Role, CreatedAt 
-                FROM Users 
-                WHERE Id = @Id";
-
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@Id", id);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-            if (!await reader.ReadAsync())
+            lock (store.SyncRoot)
             {
-                return Results.NotFound();
+                var user = store.Data.Users.FirstOrDefault(u => u.Email.Equals(request.Email, StringComparison.OrdinalIgnoreCase));
+                if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(ToUserDto(user));
             }
-
-            return Results.Ok(new UserDto
-            {
-                Id = (Guid)reader["Id"],
-                Name = reader["Name"].ToString()!,
-                Email = reader["Email"].ToString()!,
-                Role = Enum.Parse<UserRole>(reader["Role"].ToString()!),
-                CreatedAt = (DateTime)reader["CreatedAt"]
-            });
         });
 
-        // Search user by email
-        group.MapGet("/search", async (string email, DatabaseContext db) =>
+        group.MapGet("/", (AppDataStore store) =>
         {
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            var sql = @"
-                SELECT Id, Name, Email, Role, CreatedAt 
-                FROM Users 
-                WHERE Email = @Email";
-
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@Email", email);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-            if (!await reader.ReadAsync())
+            lock (store.SyncRoot)
             {
-                return Results.NotFound();
+                return Results.Ok(store.Data.Users
+                    .OrderBy(u => u.Name)
+                    .Select(ToUserDto)
+                    .ToList());
             }
-
-            return Results.Ok(new UserDto
-            {
-                Id = (Guid)reader["Id"],
-                Name = reader["Name"].ToString()!,
-                Email = reader["Email"].ToString()!,
-                Role = Enum.Parse<UserRole>(reader["Role"].ToString()!),
-                CreatedAt = (DateTime)reader["CreatedAt"]
-            });
         });
 
-        // Update user
-        group.MapPut("/{id:guid}", async (Guid id, UpdateUserRequest request, DatabaseContext db) =>
+        group.MapGet("/{id}", (string id, AppDataStore store) =>
         {
-            try
+            lock (store.SyncRoot)
             {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
+                var user = store.Data.Users.FirstOrDefault(u => u.Id == id);
+                return user is null ? Results.NotFound() : Results.Ok(ToUserDto(user));
+            }
+        });
 
-                var sql = @"
-                    UPDATE Users 
-                    SET Name = @Name, Email = @Email 
-                    WHERE Id = @Id";
+        group.MapGet("/search", (string email, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var user = store.Data.Users.FirstOrDefault(u => u.Email.Equals(email, StringComparison.OrdinalIgnoreCase));
+                return user is null ? Results.NotFound() : Results.Ok(ToUserDto(user));
+            }
+        });
 
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Id", id);
-                cmd.Parameters.AddWithValue("@Name", request.Name);
-                cmd.Parameters.AddWithValue("@Email", request.Email);
-
-                var rowsAffected = await cmd.ExecuteNonQueryAsync();
-                if (rowsAffected == 0)
+        group.MapPut("/{id}", (string id, UpdateUserRequest request, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var user = store.Data.Users.FirstOrDefault(u => u.Id == id);
+                if (user is null)
                 {
                     return Results.NotFound();
                 }
+
+                if (store.Data.Users.Any(u => u.Id != id && u.Email.Equals(request.Email, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return Results.BadRequest("El email ya está en uso");
+                }
+
+                user.Name = request.Name.Trim();
+                user.Email = request.Email.Trim();
+                user.Avatar = BuildAvatar(user.Name);
+                user.UpdatedAt = DateTime.UtcNow;
+                store.Save();
 
                 return Results.Ok(new { message = "Usuario actualizado exitosamente" });
             }
-            catch (SqlException ex) when (ex.Number == 2601 || ex.Number == 2627)
-            {
-                return Results.Problem("El email ya está en uso", statusCode: 400);
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error al actualizar usuario: {ex.Message}");
-            }
         });
 
-        // Change password
-        group.MapPut("/{id:guid}/password", async (Guid id, ChangePasswordRequest request, DatabaseContext db) =>
+        group.MapPut("/{id}/password", (string id, ChangePasswordRequest request, AppDataStore store) =>
         {
-            try
+            lock (store.SyncRoot)
             {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                // Verify current password
-                var verifySql = "SELECT PasswordHash FROM Users WHERE Id = @Id";
-                using var verifyCmd = new SqlCommand(verifySql, conn);
-                verifyCmd.Parameters.AddWithValue("@Id", id);
-                var storedHash = await verifyCmd.ExecuteScalarAsync();
-
-                if (storedHash == null || !BCrypt.Net.BCrypt.Verify(request.CurrentPassword, storedHash.ToString()))
-                {
-                    return Results.Problem("Contraseña actual incorrecta", statusCode: 400);
-                }
-
-                // Update password
-                var newHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
-                var updateSql = "UPDATE Users SET PasswordHash = @PasswordHash WHERE Id = @Id";
-                using var updateCmd = new SqlCommand(updateSql, conn);
-                updateCmd.Parameters.AddWithValue("@Id", id);
-                updateCmd.Parameters.AddWithValue("@PasswordHash", newHash);
-                await updateCmd.ExecuteNonQueryAsync();
-
-                return Results.Ok(new { message = "Contraseña cambiada exitosamente" });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error al cambiar contraseña: {ex.Message}");
-            }
-        });
-
-        // Delete user
-        group.MapDelete("/{id:guid}", async (Guid id, DatabaseContext db) =>
-        {
-            try
-            {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                var sql = "DELETE FROM Users WHERE Id = @Id";
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Id", id);
-
-                var rowsAffected = await cmd.ExecuteNonQueryAsync();
-                if (rowsAffected == 0)
+                var user = store.Data.Users.FirstOrDefault(u => u.Id == id);
+                if (user is null)
                 {
                     return Results.NotFound();
                 }
 
-                return Results.Ok(new { message = "Usuario eliminado exitosamente" });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error al eliminar usuario: {ex.Message}");
+                if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
+                {
+                    return Results.BadRequest("Contraseña actual incorrecta");
+                }
+
+                user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+                user.UpdatedAt = DateTime.UtcNow;
+                store.Save();
+
+                return Results.Ok(new { message = "Contraseña cambiada exitosamente" });
             }
         });
+
+        group.MapDelete("/{id}", (string id, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var user = store.Data.Users.FirstOrDefault(u => u.Id == id);
+                if (user is null)
+                {
+                    return Results.NotFound();
+                }
+
+                store.Data.Users.Remove(user);
+                store.Data.ProjectMembers.RemoveAll(pm => pm.UserId == id);
+                store.Data.Notifications.RemoveAll(n => n.UserId == id || n.CreatorId == id);
+                store.Data.StandupNotes.RemoveAll(note => note.UserId == id);
+
+                foreach (var story in store.Data.UserStories.Where(story => story.AssigneeId == id))
+                {
+                    story.AssigneeId = null;
+                    story.UpdatedAt = DateTime.UtcNow;
+                }
+
+                foreach (var task in store.Data.Tasks.Where(task => task.AssignedToId == id))
+                {
+                    task.AssignedToId = null;
+                }
+
+                store.Save();
+                return Results.Ok(new { message = "Usuario eliminado exitosamente" });
+            }
+        });
+    }
+
+    public static UserDto ToUserDto(User user)
+    {
+        return new UserDto
+        {
+            Id = user.Id,
+            Name = user.Name,
+            Email = user.Email,
+            Role = user.Role,
+            CreatedAt = user.CreatedAt
+        };
+    }
+
+    public static string BuildAvatar(string name)
+    {
+        var initials = name.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => char.ToUpperInvariant(part[0]))
+            .Take(2)
+            .ToArray();
+
+        return initials.Length == 0 ? "U" : new string(initials);
+    }
+
+    private static UserRole ParseRole(string role)
+    {
+        return Enum.TryParse<UserRole>(role, true, out var parsed) ? parsed : UserRole.Developer;
     }
 }

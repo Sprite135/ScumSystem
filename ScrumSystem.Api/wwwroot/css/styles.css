@@ -4793,6 +4793,15 @@ padding: 0;
     cursor: not-allowed;
 }
 
+/* Fix for sprint name input visibility */
+#sprint-name {
+    color: #000000 !important;
+}
+
+#sprint-name:focus {
+    color: #000000 !important;
+}
+
 .form-group textarea {
     resize: vertical;
     min-height: 80px;

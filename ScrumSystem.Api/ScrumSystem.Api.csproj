@@ -4,11 +4,14 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <DefaultItemExcludes>$(DefaultItemExcludes);D:\Proyecto_Tesis\.artifacts\**</DefaultItemExcludes>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.1.2" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="7.5.1" />
   </ItemGroup>
 
   <ItemGroup>

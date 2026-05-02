@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+using ScrumSystem.Api.Data;
 using ScrumSystem.Api.Models;
 
 namespace ScrumSystem.Api.Routes;
@@ -9,93 +9,42 @@ public static class DashboardRoutes
     {
         var group = app.MapGroup("/api/dashboard");
 
-        // Get dashboard stats
-        group.MapGet("/stats", async (DatabaseContext db) =>
+        group.MapGet("/stats", (AppDataStore store) =>
         {
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            var stats = new DashboardStats();
-
-            // Total projects
-            using (var cmd = new SqlCommand("SELECT COUNT(*) FROM Projects", conn))
+            lock (store.SyncRoot)
             {
-                stats.TotalProjects = (int)await cmd.ExecuteScalarAsync();
+                var stats = new DashboardStats
+                {
+                    TotalProjects = store.Data.Projects.Count,
+                    ActiveSprints = store.Data.Sprints.Count(sprint => sprint.Status == "Active"),
+                    TotalStories = store.Data.UserStories.Count,
+                    TotalTasks = store.Data.Tasks.Count,
+                    CompletedTasks = store.Data.Tasks.Count(task => task.Status == "Done")
+                };
+
+                stats.PendingTasks = stats.TotalTasks - stats.CompletedTasks;
+                return Results.Ok(stats);
             }
-
-            // Active sprints
-            using (var cmd = new SqlCommand("SELECT COUNT(*) FROM Sprints WHERE Status = 'Active'", conn))
-            {
-                stats.ActiveSprints = (int)await cmd.ExecuteScalarAsync();
-            }
-
-            // Total stories
-            using (var cmd = new SqlCommand("SELECT COUNT(*) FROM UserStories", conn))
-            {
-                stats.TotalStories = (int)await cmd.ExecuteScalarAsync();
-            }
-
-            // Total tasks
-            using (var cmd = new SqlCommand("SELECT COUNT(*) FROM Tasks", conn))
-            {
-                stats.TotalTasks = (int)await cmd.ExecuteScalarAsync();
-            }
-
-            // Completed tasks
-            using (var cmd = new SqlCommand("SELECT COUNT(*) FROM Tasks WHERE Status = 'Done'", conn))
-            {
-                stats.CompletedTasks = (int)await cmd.ExecuteScalarAsync();
-            }
-
-            stats.PendingTasks = stats.TotalTasks - stats.CompletedTasks;
-
-            return Results.Ok(stats);
         });
 
-        // Get project stats
-        group.MapGet("/projects/{projectId:guid}/stats", async (Guid projectId, DatabaseContext db) =>
+        group.MapGet("/projects/{projectId}/stats", (string projectId, AppDataStore store) =>
         {
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            var stats = new Dictionary<string, object>();
-
-            // Total sprints
-            using (var cmd = new SqlCommand(
-                "SELECT COUNT(*) FROM Sprints WHERE ProjectId = @ProjectId", conn))
+            lock (store.SyncRoot)
             {
-                cmd.Parameters.AddWithValue("@ProjectId", projectId);
-                stats["totalSprints"] = (int)await cmd.ExecuteScalarAsync();
-            }
+                var sprintIds = store.Data.Sprints.Where(sprint => sprint.ProjectId == projectId).Select(sprint => sprint.Id).ToHashSet();
+                var activeSprintIds = store.Data.Sprints.Where(sprint => sprint.ProjectId == projectId && sprint.Status == "Active").Select(sprint => sprint.Id).ToHashSet();
+                var stats = new Dictionary<string, object>
+                {
+                    ["totalSprints"] = sprintIds.Count,
+                    ["activeSprints"] = activeSprintIds.Count,
+                    ["backlogStories"] = store.Data.UserStories.Count(story => story.ProjectId == projectId && story.Status == "Backlog"),
+                    ["activeSprintPoints"] = store.Data.UserStories
+                        .Where(story => story.ProjectId == projectId && story.SprintId != null && activeSprintIds.Contains(story.SprintId))
+                        .Sum(story => story.StoryPoints ?? 0)
+                };
 
-            // Active sprints
-            using (var cmd = new SqlCommand(
-                "SELECT COUNT(*) FROM Sprints WHERE ProjectId = @ProjectId AND Status = 'Active'", conn))
-            {
-                cmd.Parameters.AddWithValue("@ProjectId", projectId);
-                stats["activeSprints"] = (int)await cmd.ExecuteScalarAsync();
+                return Results.Ok(stats);
             }
-
-            // Backlog stories
-            using (var cmd = new SqlCommand(
-                "SELECT COUNT(*) FROM UserStories WHERE ProjectId = @ProjectId AND Status = 'Backlog'", conn))
-            {
-                cmd.Parameters.AddWithValue("@ProjectId", projectId);
-                stats["backlogStories"] = (int)await cmd.ExecuteScalarAsync();
-            }
-
-            // Total story points in active sprint
-            using (var cmd = new SqlCommand(@"
-                SELECT ISNULL(SUM(StoryPoints), 0) 
-                FROM UserStories us
-                JOIN Sprints s ON us.SprintId = s.Id
-                WHERE s.ProjectId = @ProjectId AND s.Status = 'Active'", conn))
-            {
-                cmd.Parameters.AddWithValue("@ProjectId", projectId);
-                stats["activeSprintPoints"] = (int)await cmd.ExecuteScalarAsync();
-            }
-
-            return Results.Ok(stats);
         });
     }
 }

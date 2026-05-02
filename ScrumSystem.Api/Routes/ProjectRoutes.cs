@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+using ScrumSystem.Api.Data;
 using ScrumSystem.Api.Models;
 
 namespace ScrumSystem.Api.Routes;
@@ -9,508 +9,442 @@ public static class ProjectRoutes
     {
         var group = app.MapGroup("/api/projects");
 
-        // Create project
-        group.MapPost("/", async (CreateProjectRequest request, DatabaseContext db) =>
+        group.MapGet("/", (string? userId, AppDataStore store) =>
         {
-            try
+            lock (store.SyncRoot)
             {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
+                var visibleProjects = store.Data.Projects
+                    .Where(project => string.IsNullOrWhiteSpace(userId) || store.Data.ProjectMembers.Any(member => member.ProjectId == project.Id && member.UserId == userId))
+                    .OrderByDescending(project => project.CreatedAt)
+                    .Select(project => ToProjectDto(project, store))
+                    .ToList();
 
-                var id = Guid.NewGuid();
-
-                var sql = @"
-                    INSERT INTO Projects (Id, Name, Description, [Key], Color, Icon, ProductOwnerId)
-                    VALUES (@Id, @Name, @Description, @Key, @Color, @Icon, @ProductOwnerId)";
-
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Id", id);
-                cmd.Parameters.AddWithValue("@Name", request.Name);
-                cmd.Parameters.AddWithValue("@Description", (object?)request.Description ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@Key", (object?)request.Key ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@Color", (object?)request.Color ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@Icon", (object?)request.Icon ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@ProductOwnerId", request.CreatedById.HasValue ? (object)request.CreatedById.Value : DBNull.Value);
-
-                await cmd.ExecuteNonQueryAsync();
-
-                // Add creator as member (always)
-                if (request.CreatedById.HasValue)
-                {
-                    var memberSql = @"
-                        INSERT INTO ProjectMembers (ProjectId, UserId) 
-                        VALUES (@ProjectId, @UserId)";
-                    using var memberCmd = new SqlCommand(memberSql, conn);
-                    memberCmd.Parameters.AddWithValue("@ProjectId", id);
-                    memberCmd.Parameters.AddWithValue("@UserId", request.CreatedById.Value);
-                    await memberCmd.ExecuteNonQueryAsync();
-                }
-
-                // Add additional members from request
-                if (request.MemberIds != null)
-                {
-                    foreach (var memberId in request.MemberIds)
-                    {
-                        if (memberId == request.CreatedById) continue; // Skip if already added
-                        var memberSql = @"
-                            INSERT INTO ProjectMembers (ProjectId, UserId) 
-                            VALUES (@ProjectId, @UserId)";
-                        using var memberCmd = new SqlCommand(memberSql, conn);
-                        memberCmd.Parameters.AddWithValue("@ProjectId", id);
-                        memberCmd.Parameters.AddWithValue("@UserId", memberId);
-                        await memberCmd.ExecuteNonQueryAsync();
-                    }
-                }
-
-                return Results.Created($"/api/projects/{id}", new Project
-                {
-                    Id = id,
-                    Name = request.Name,
-                    Description = request.Description,
-                    Key = request.Key,
-                    Color = request.Color,
-                    Icon = request.Icon,
-                    CreatedAt = DateTime.UtcNow
-                });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error creating project: {ex.Message}");
+                return Results.Ok(visibleProjects);
             }
         });
 
-        // Update project
-        group.MapPut("/{id:guid}", async (Guid id, UpdateProjectRequest request, DatabaseContext db) =>
+        group.MapGet("/{id}", (string id, AppDataStore store) =>
         {
-            try
+            lock (store.SyncRoot)
             {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
+                var project = store.Data.Projects.FirstOrDefault(p => p.Id == id);
+                return project is null ? Results.NotFound() : Results.Ok(ToProjectDto(project, store));
+            }
+        });
 
-                // Check if user is the creator
-                var checkSql = "SELECT ProductOwnerId FROM Projects WHERE Id = @Id";
-                using var checkCmd = new SqlCommand(checkSql, conn);
-                checkCmd.Parameters.AddWithValue("@Id", id);
-                var productOwnerId = await checkCmd.ExecuteScalarAsync() as Guid?;
+        group.MapPost("/", (CreateProjectRequest request, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                if (string.IsNullOrWhiteSpace(request.CreatedById))
+                {
+                    return Results.BadRequest("El proyecto requiere un creador válido");
+                }
 
-                if (productOwnerId == null)
+                var creator = store.Data.Users.FirstOrDefault(user => user.Id == request.CreatedById);
+                if (creator is null)
+                {
+                    return Results.BadRequest("El usuario creador no existe");
+                }
+
+                var project = new Project
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Name = request.Name.Trim(),
+                    Description = request.Description?.Trim(),
+                    Key = string.IsNullOrWhiteSpace(request.Key) ? BuildProjectKey(request.Name) : request.Key.Trim().ToUpperInvariant(),
+                    Color = request.Color,
+                    Icon = request.Icon,
+                    CreatorId = creator.Id,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                store.Data.Projects.Add(project);
+                AddMember(project.Id, creator.Id, "Owner", store);
+
+                foreach (var memberId in request.MemberIds?.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct() ?? Enumerable.Empty<string>())
+                {
+                    if (memberId == creator.Id || store.Data.Users.All(user => user.Id != memberId))
+                    {
+                        continue;
+                    }
+
+                    AddMember(project.Id, memberId, "Developer", store);
+                    CreateNotification(
+                        store,
+                        userId: memberId,
+                        title: "Te agregaron a un proyecto",
+                        message: $"Ahora formas parte del proyecto {project.Name}.",
+                        type: "project_member_added",
+                        projectId: project.Id,
+                        creatorId: creator.Id,
+                        status: "accepted");
+                }
+
+                store.Save();
+                return Results.Created($"/api/projects/{project.Id}", ToProjectDto(project, store));
+            }
+        });
+
+        group.MapPost("/{id}/members", (string id, AddProjectMemberRequest request, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var project = store.Data.Projects.FirstOrDefault(p => p.Id == id);
+                var user = store.Data.Users.FirstOrDefault(u => u.Id == request.UserId);
+                if (project is null || user is null)
                 {
                     return Results.NotFound();
                 }
 
-                if (productOwnerId != request.UserId)
+                // Verificar si ya es miembro
+                if (store.Data.ProjectMembers.Any(member => member.ProjectId == id && member.UserId == request.UserId))
                 {
-                    return Results.Problem("Solo el creador del proyecto puede modificarlo", statusCode: 403);
+                    return Results.Ok(new { message = "El usuario ya pertenece al proyecto" });
                 }
 
-                var sql = @"
-                    UPDATE Projects 
-                    SET Name = @Name, [Key] = @Key, Color = @Color, Icon = @Icon
-                    WHERE Id = @Id";
+                // Verificar si ya tiene una invitación pendiente
+                if (store.Data.ProjectInvitations.Any(inv => inv.ProjectId == id && inv.UserId == request.UserId && inv.Status == "pending"))
+                {
+                    return Results.Ok(new { message = "Ya existe una invitación pendiente para este usuario" });
+                }
 
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Id", id);
-                cmd.Parameters.AddWithValue("@Name", request.Name);
-                cmd.Parameters.AddWithValue("@Key", (object?)request.Key ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@Color", (object?)request.Color ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@Icon", (object?)request.Icon ?? DBNull.Value);
+                // Crear invitación pendiente
+                var invitation = new ProjectInvitation
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    ProjectId = id,
+                    UserId = request.UserId,
+                    InvitedById = project.CreatorId,
+                    Role = "Developer",
+                    Status = "pending",
+                    CreatedAt = DateTime.UtcNow
+                };
+                store.Data.ProjectInvitations.Add(invitation);
 
-                await cmd.ExecuteNonQueryAsync();
+                // Crear notificación para el usuario invitado
+                CreateNotification(
+                    store,
+                    userId: request.UserId,
+                    title: "Invitación a proyecto",
+                    message: $"Has sido invitado a unirte al proyecto '{project.Name}'.",
+                    type: "project_invitation",
+                    projectId: id,
+                    creatorId: project.CreatorId,
+                    status: "pending");
 
+                store.Save();
+                return Results.Ok(new { message = "Invitación enviada correctamente", invitationId = invitation.Id });
+            }
+        });
+
+        // Aceptar invitación
+        group.MapPost("/invitations/{invitationId}/accept", (string invitationId, string userId, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var invitation = store.Data.ProjectInvitations.FirstOrDefault(i => i.Id == invitationId && i.UserId == userId);
+                if (invitation is null)
+                {
+                    return Results.NotFound(new { message = "Invitación no encontrada" });
+                }
+
+                if (invitation.Status != "pending")
+                {
+                    return Results.BadRequest(new { message = "La invitación ya fue respondida" });
+                }
+
+                var project = store.Data.Projects.FirstOrDefault(p => p.Id == invitation.ProjectId);
+                if (project is null)
+                {
+                    return Results.NotFound(new { message = "Proyecto no encontrado" });
+                }
+
+                // Actualizar invitación
+                invitation.Status = "accepted";
+                invitation.RespondedAt = DateTime.UtcNow;
+
+                // Agregar como miembro
+                AddMember(invitation.ProjectId, invitation.UserId, invitation.Role, store);
+
+                // Crear notificación al creador
+                CreateNotification(
+                    store,
+                    userId: invitation.InvitedById,
+                    title: "Invitación aceptada",
+                    message: $"El usuario ha aceptado unirse al proyecto '{project.Name}'.",
+                    type: "project_invitation_accepted",
+                    projectId: invitation.ProjectId,
+                    creatorId: userId,
+                    status: "accepted");
+
+                store.Save();
+                return Results.Ok(new { message = "Invitación aceptada. Ahora eres miembro del proyecto." });
+            }
+        });
+
+        // Rechazar invitación
+        group.MapPost("/invitations/{invitationId}/reject", (string invitationId, string userId, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var invitation = store.Data.ProjectInvitations.FirstOrDefault(i => i.Id == invitationId && i.UserId == userId);
+                if (invitation is null)
+                {
+                    return Results.NotFound(new { message = "Invitación no encontrada" });
+                }
+
+                if (invitation.Status != "pending")
+                {
+                    return Results.BadRequest(new { message = "La invitación ya fue respondida" });
+                }
+
+                var project = store.Data.Projects.FirstOrDefault(p => p.Id == invitation.ProjectId);
+
+                // Actualizar invitación
+                invitation.Status = "rejected";
+                invitation.RespondedAt = DateTime.UtcNow;
+
+                // Crear notificación al creador
+                CreateNotification(
+                    store,
+                    userId: invitation.InvitedById,
+                    title: "Invitación rechazada",
+                    message: $"El usuario ha rechazado la invitación al proyecto '{project?.Name ?? "desconocido"}'.",
+                    type: "project_invitation_rejected",
+                    projectId: invitation.ProjectId,
+                    creatorId: userId,
+                    status: "rejected");
+
+                store.Save();
+                return Results.Ok(new { message = "Invitación rechazada" });
+            }
+        });
+
+        // Listar invitaciones pendientes del usuario
+        group.MapGet("/invitations/pending", (string userId, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var invitations = store.Data.ProjectInvitations
+                    .Where(i => i.UserId == userId && i.Status == "pending")
+                    .Join(store.Data.Projects, inv => inv.ProjectId, p => p.Id, (inv, project) => new
+                    {
+                        inv.Id,
+                        inv.ProjectId,
+                        inv.UserId,
+                        inv.InvitedById,
+                        inv.Role,
+                        inv.Status,
+                        inv.CreatedAt,
+                        ProjectName = project.Name,
+                        ProjectKey = project.Key
+                    })
+                    .OrderByDescending(i => i.CreatedAt)
+                    .ToList();
+
+                return Results.Ok(invitations);
+            }
+        });
+
+        // Listar invitaciones enviadas por el creador (para un proyecto)
+        group.MapGet("/{id}/invitations", (string id, string? userId, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var project = store.Data.Projects.FirstOrDefault(p => p.Id == id);
+                if (project is null)
+                {
+                    return Results.NotFound();
+                }
+
+                // Solo el creador puede ver las invitaciones
+                if (!string.IsNullOrWhiteSpace(userId) && project.CreatorId != userId)
+                {
+                    return Results.BadRequest(new { message = "Solo el creador puede ver las invitaciones" });
+                }
+
+                var invitations = store.Data.ProjectInvitations
+                    .Where(i => i.ProjectId == id)
+                    .Join(store.Data.Users, inv => inv.UserId, u => u.Id, (inv, user) => new
+                    {
+                        inv.Id,
+                        inv.ProjectId,
+                        UserId = inv.UserId,
+                        UserName = user.Name,
+                        UserEmail = user.Email,
+                        inv.InvitedById,
+                        inv.Role,
+                        inv.Status,
+                        inv.CreatedAt,
+                        inv.RespondedAt
+                    })
+                    .OrderByDescending(i => i.CreatedAt)
+                    .ToList();
+
+                return Results.Ok(invitations);
+            }
+        });
+
+        group.MapPost("/{id}/leave", (string id, string userId, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var project = store.Data.Projects.FirstOrDefault(p => p.Id == id);
+                if (project is null)
+                {
+                    return Results.NotFound();
+                }
+
+                if (project.CreatorId == userId)
+                {
+                    return Results.BadRequest("El creador no puede salir del proyecto. Debe eliminarlo o transferir la propiedad.");
+                }
+
+                var removed = store.Data.ProjectMembers.RemoveAll(member => member.ProjectId == id && member.UserId == userId);
+                if (removed == 0)
+                {
+                    return Results.NotFound();
+                }
+
+                store.Save();
+                return Results.Ok(new { message = "Has salido del proyecto" });
+            }
+        });
+
+        group.MapPut("/{id}", (string id, UpdateProjectRequest request, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var project = store.Data.Projects.FirstOrDefault(p => p.Id == id);
+                if (project is null)
+                {
+                    return Results.NotFound();
+                }
+
+                if (!string.IsNullOrWhiteSpace(request.UserId) && project.CreatorId != request.UserId)
+                {
+                    return Results.BadRequest("Solo el creador puede actualizar el proyecto");
+                }
+
+                project.Name = request.Name.Trim();
+                project.Description = request.Description?.Trim() ?? project.Description;
+                project.Key = string.IsNullOrWhiteSpace(request.Key) ? project.Key : request.Key.Trim().ToUpperInvariant();
+                project.Color = request.Color;
+                project.Icon = request.Icon;
+                project.UpdatedAt = DateTime.UtcNow;
+
+                store.Save();
                 return Results.Ok(new { message = "Proyecto actualizado" });
             }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error updating project: {ex.Message}");
-            }
         });
 
-        // Get all projects with members (filtered by user membership)
-        group.MapGet("/", async (Guid userId, DatabaseContext db) =>
+        group.MapDelete("/{id}", (string id, string? userId, AppDataStore store) =>
         {
-            var projectsWithMembers = new List<ProjectDto>();
-
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            // Get projects where user is a member (creator or added via ProjectMembers)
-            var sql = @"
-                SELECT DISTINCT 
-                    p.Id, p.Name, p.Description, p.[Key], p.Color, p.Icon, 
-                    p.ProductOwnerId, p.ScrumMasterId, p.CreatedAt,
-                    u.Name as CreatorName
-                FROM Projects p
-                LEFT JOIN ProjectMembers pm ON p.Id = pm.ProjectId
-                LEFT JOIN Users u ON p.ProductOwnerId = u.Id
-                WHERE p.ProductOwnerId = @UserId OR pm.UserId = @UserId
-                ORDER BY p.CreatedAt DESC";
-            
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@UserId", userId);
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            var projects = new List<ProjectDto>();
-            while (await reader.ReadAsync())
+            lock (store.SyncRoot)
             {
-                var ownerIdValue = reader["ProductOwnerId"];
-                var scrumMasterIdValue = reader["ScrumMasterId"];
-                
-                var project = new ProjectDto
+                var project = store.Data.Projects.FirstOrDefault(p => p.Id == id);
+                if (project is null)
                 {
-                    Id = (Guid)reader["Id"],
-                    Name = reader["Name"].ToString()!,
-                    Description = reader["Description"]?.ToString(),
-                    Key = reader["Key"]?.ToString(),
-                    Color = reader["Color"]?.ToString(),
-                    Icon = reader["Icon"]?.ToString(),
-                    ProductOwnerId = ownerIdValue == null || ownerIdValue == DBNull.Value ? null : (Guid?)ownerIdValue,
-                    ScrumMasterId = scrumMasterIdValue == null || scrumMasterIdValue == DBNull.Value ? null : (Guid?)scrumMasterIdValue,
-                    CreatedAt = (DateTime)reader["CreatedAt"],
-                    CreatorName = reader["CreatorName"]?.ToString()
-                };
-                projects.Add(project);
-            }
-            reader.Close();
-
-            // Get members for each project
-            foreach (var project in projects)
-            {
-                var members = new List<UserDto>();
-                var membersSql = @"
-                    SELECT u.Id, u.Name, u.Email, u.Role, u.CreatedAt
-                    FROM Users u
-                    JOIN ProjectMembers pm ON u.Id = pm.UserId
-                    WHERE pm.ProjectId = @ProjectId";
-                
-                using var membersCmd = new SqlCommand(membersSql, conn);
-                membersCmd.Parameters.AddWithValue("@ProjectId", project.Id);
-                using var membersReader = await membersCmd.ExecuteReaderAsync();
-                
-                while (await membersReader.ReadAsync())
-                {
-                    members.Add(new UserDto
-                    {
-                        Id = (Guid)membersReader["Id"],
-                        Name = membersReader["Name"].ToString()!,
-                        Email = membersReader["Email"].ToString()!,
-                        Role = Enum.Parse<UserRole>(membersReader["Role"].ToString()!),
-                        CreatedAt = (DateTime)membersReader["CreatedAt"]
-                    });
-                }
-                membersReader.Close();
-
-                projectsWithMembers.Add(new ProjectDto
-                {
-                    Id = project.Id,
-                    Name = project.Name,
-                    Description = project.Description,
-                    Key = project.Key,
-                    Color = project.Color,
-                    Icon = project.Icon,
-                    ProductOwnerId = project.ProductOwnerId,
-                    ScrumMasterId = project.ScrumMasterId,
-                    CreatedAt = project.CreatedAt,
-                    CreatorName = project.CreatorName,
-                    Members = members
-                });
-            }
-
-            return Results.Ok(projectsWithMembers);
-        });
-
-        // Get project by ID with members (verify user has access)
-        group.MapGet("/{id:guid}", async (Guid id, Guid userId, DatabaseContext db) =>
-        {
-            using var conn = db.CreateConnection();
-            await conn.OpenAsync();
-
-            // Get project with creator name
-            var sql = @"
-                SELECT p.*, u.Name as CreatorName
-                FROM Projects p
-                LEFT JOIN Users u ON p.ProductOwnerId = u.Id
-                WHERE p.Id = @Id";
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@Id", id);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-            if (!await reader.ReadAsync())
-            {
-                return Results.NotFound();
-            }
-
-            var project = new ProjectDto
-            {
-                Id = (Guid)reader["Id"],
-                Name = reader["Name"].ToString()!,
-                Description = reader["Description"]?.ToString(),
-                Key = reader["Key"]?.ToString(),
-                Color = reader["Color"]?.ToString(),
-                Icon = reader["Icon"]?.ToString(),
-                ProductOwnerId = reader["ProductOwnerId"] as Guid?,
-                ScrumMasterId = reader["ScrumMasterId"] as Guid?,
-                CreatedAt = (DateTime)reader["CreatedAt"],
-                CreatorName = reader["CreatorName"]?.ToString()
-            };
-            reader.Close();
-
-            // Verify user has access (is creator or member)
-            var accessSql = @"
-                SELECT COUNT(*) 
-                FROM Projects p
-                LEFT JOIN ProjectMembers pm ON p.Id = pm.ProjectId
-                WHERE p.Id = @ProjectId AND (p.ProductOwnerId = @UserId OR pm.UserId = @UserId)";
-            using var accessCmd = new SqlCommand(accessSql, conn);
-            accessCmd.Parameters.AddWithValue("@ProjectId", id);
-            accessCmd.Parameters.AddWithValue("@UserId", userId);
-            var hasAccess = (int)await accessCmd.ExecuteScalarAsync() > 0;
-
-            if (!hasAccess)
-            {
-                return Results.NotFound(); // Return 404 to avoid leaking project existence
-            }
-
-            // Get members
-            var membersSql = @"
-                SELECT u.Id, u.Name, u.Email, u.Role, u.CreatedAt
-                FROM Users u
-                JOIN ProjectMembers pm ON u.Id = pm.UserId
-                WHERE pm.ProjectId = @ProjectId";
-
-            using var membersCmd = new SqlCommand(membersSql, conn);
-            membersCmd.Parameters.AddWithValue("@ProjectId", id);
-            using var membersReader = await membersCmd.ExecuteReaderAsync();
-
-            var members = new List<UserDto>();
-            while (await membersReader.ReadAsync())
-            {
-                members.Add(new UserDto
-                {
-                    Id = (Guid)membersReader["Id"],
-                    Name = membersReader["Name"].ToString()!,
-                    Email = membersReader["Email"].ToString()!,
-                    Role = Enum.Parse<UserRole>(membersReader["Role"].ToString()!),
-                    CreatedAt = (DateTime)membersReader["CreatedAt"]
-                });
-            }
-
-            return Results.Ok(new ProjectDto
-            {
-                Id = project.Id,
-                Name = project.Name,
-                Description = project.Description,
-                Key = project.Key,
-                Color = project.Color,
-                Icon = project.Icon,
-                ProductOwnerId = project.ProductOwnerId,
-                ScrumMasterId = project.ScrumMasterId,
-                CreatedAt = project.CreatedAt,
-                Members = members
-            });
-        });
-
-        // Add member to project (direct add, creates notification)
-        group.MapPost("/{id:guid}/members", async (Guid id, AddMemberRequest request, DatabaseContext db) =>
-        {
-            try
-            {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                // Check if user is already a member
-                var checkSql = "SELECT COUNT(*) FROM ProjectMembers WHERE ProjectId = @ProjectId AND UserId = @UserId";
-                using var checkCmd = new SqlCommand(checkSql, conn);
-                checkCmd.Parameters.AddWithValue("@ProjectId", id);
-                checkCmd.Parameters.AddWithValue("@UserId", request.UserId);
-                var count = (int)await checkCmd.ExecuteScalarAsync();
-
-                if (count > 0)
-                {
-                    return Results.Problem("El usuario ya es miembro del proyecto", statusCode: 400);
+                    return Results.NotFound();
                 }
 
-                // Get project name for notification
-                var projectSql = "SELECT Name FROM Projects WHERE Id = @Id";
-                using var projectCmd = new SqlCommand(projectSql, conn);
-                projectCmd.Parameters.AddWithValue("@Id", id);
-                var projectName = await projectCmd.ExecuteScalarAsync() as string ?? "Proyecto";
-
-                // Create notification for the added user (pending invitation)
-                var notificationId = Guid.NewGuid();
-                var notificationSql = @"
-                    INSERT INTO Notifications (Id, UserId, Type, Title, Message, ProjectId, Status, IsRead, CreatedAt)
-                    VALUES (@Id, @UserId, @Type, @Title, @Message, @ProjectId, 'pending', 0, GETUTCDATE())";
-                
-                using var notifCmd = new SqlCommand(notificationSql, conn);
-                notifCmd.Parameters.AddWithValue("@Id", notificationId);
-                notifCmd.Parameters.AddWithValue("@UserId", request.UserId);
-                notifCmd.Parameters.AddWithValue("@Type", "project_invitation");
-                notifCmd.Parameters.AddWithValue("@Title", "¡Invitación a proyecto!");
-                notifCmd.Parameters.AddWithValue("@Message", "Has sido invitado a unirte al proyecto \"" + projectName + "\". Acepta o rechaza la invitación.");
-                notifCmd.Parameters.AddWithValue("@ProjectId", id);
-                
-                await notifCmd.ExecuteNonQueryAsync();
-
-                return Results.Ok(new { message = "Invitación enviada exitosamente" });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error al enviar invitación: {ex.Message}");
-            }
-        });
-
-        // Delete project (only creator can delete)
-        group.MapDelete("/{id:guid}", async (Guid id, Guid userId, DatabaseContext db) =>
-        {
-            try
-            {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                // Check if user is the creator
-                var checkSql = "SELECT ProductOwnerId FROM Projects WHERE Id = @Id";
-                using var checkCmd = new SqlCommand(checkSql, conn);
-                checkCmd.Parameters.AddWithValue("@Id", id);
-                var productOwnerId = await checkCmd.ExecuteScalarAsync() as Guid?;
-
-                // If project has no owner (legacy), allow any member to delete
-                // If project has owner, only owner can delete
-                if (productOwnerId != null && productOwnerId != userId)
+                if (!string.IsNullOrWhiteSpace(userId) && project.CreatorId != userId)
                 {
-                    return Results.Problem("Solo el creador del proyecto puede eliminarlo", statusCode: 403);
+                    return Results.BadRequest("Solo el creador puede eliminar el proyecto");
                 }
 
-                Console.WriteLine($"[DELETE PROJECT] Attempting to delete project {id}");
+                var sprintIds = store.Data.Sprints.Where(sprint => sprint.ProjectId == id).Select(sprint => sprint.Id).ToHashSet();
+                var storyIds = store.Data.UserStories.Where(story => story.ProjectId == id).Select(story => story.Id).ToHashSet();
 
-                // Get project name and members for notification
-                var projectInfoSql = "SELECT Name FROM Projects WHERE Id = @Id";
-                using var projectInfoCmd = new SqlCommand(projectInfoSql, conn);
-                projectInfoCmd.Parameters.AddWithValue("@Id", id);
-                var projectName = await projectInfoCmd.ExecuteScalarAsync() as string ?? "Proyecto";
+                store.Data.Projects.Remove(project);
+                store.Data.ProjectMembers.RemoveAll(member => member.ProjectId == id);
+                store.Data.Sprints.RemoveAll(sprint => sprint.ProjectId == id);
+                store.Data.UserStories.RemoveAll(story => story.ProjectId == id);
+                store.Data.Tasks.RemoveAll(task => storyIds.Contains(task.StoryId));
+                store.Data.StandupNotes.RemoveAll(note => sprintIds.Contains(note.SprintId));
+                store.Data.Notifications.RemoveAll(notification => notification.ProjectId == id);
 
-                var membersSql = "SELECT UserId FROM ProjectMembers WHERE ProjectId = @Id";
-                using var membersCmd = new SqlCommand(membersSql, conn);
-                membersCmd.Parameters.AddWithValue("@Id", id);
-                using var membersReader = await membersCmd.ExecuteReaderAsync();
-                var memberIds = new List<Guid>();
-                while (await membersReader.ReadAsync())
-                {
-                    memberIds.Add((Guid)membersReader["UserId"]);
-                }
-                membersReader.Close();
-
-                // Send notification to all members (except the deleter)
-                foreach (var memberId in memberIds)
-                {
-                    if (memberId == userId) continue; // Don't notify the deleter
-
-                    var notificationId = Guid.NewGuid();
-                    var notificationSql = @"
-                        INSERT INTO Notifications (Id, UserId, Type, Title, Message, Status, IsRead, CreatedAt)
-                        VALUES (@Id, @UserId, @Type, @Title, @Message, 'completed', 0, GETUTCDATE())";
-
-                    using var notifCmd = new SqlCommand(notificationSql, conn);
-                    notifCmd.Parameters.AddWithValue("@Id", notificationId);
-                    notifCmd.Parameters.AddWithValue("@UserId", memberId);
-                    notifCmd.Parameters.AddWithValue("@Type", "project_deleted");
-                    notifCmd.Parameters.AddWithValue("@Title", "Proyecto eliminado");
-                    notifCmd.Parameters.AddWithValue("@Message", $"El proyecto \"{projectName}\" ha sido eliminado por el creador.");
-                    await notifCmd.ExecuteNonQueryAsync();
-                }
-
-                // Delete in correct order to handle foreign key constraints
-                var sqls = new[]
-                {
-                    "DELETE FROM StandupNotes WHERE SprintId IN (SELECT Id FROM Sprints WHERE ProjectId = @Id)",
-                    "DELETE FROM Tasks WHERE StoryId IN (SELECT Id FROM UserStories WHERE ProjectId = @Id)",
-                    "DELETE FROM UserStories WHERE ProjectId = @Id",
-                    "DELETE FROM Sprints WHERE ProjectId = @Id",
-                    "DELETE FROM ProjectMembers WHERE ProjectId = @Id",
-                    "DELETE FROM Projects WHERE Id = @Id"
-                };
-
-                foreach (var sql in sqls)
-                {
-                    using var cmd = new SqlCommand(sql, conn);
-                    cmd.Parameters.AddWithValue("@Id", id);
-                    var rows = await cmd.ExecuteNonQueryAsync();
-                    Console.WriteLine($"[DELETE PROJECT] SQL: {sql.Substring(0, Math.Min(50, sql.Length))}... Rows affected: {rows}");
-                }
-
-                Console.WriteLine($"[DELETE PROJECT] Successfully deleted project {id}");
-                return Results.Ok(new { message = "Proyecto eliminado exitosamente" });
-            }
-            catch (SqlException ex)
-            {
-                Console.WriteLine($"[DELETE PROJECT] SQL Error: {ex.Message} - Number: {ex.Number}");
-                return Results.Problem($"Error de base de datos al eliminar proyecto: {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[DELETE PROJECT] General Error: {ex.Message} - Stack: {ex.StackTrace}");
-                return Results.Problem($"Error al eliminar proyecto: {ex.Message}");
-            }
-        });
-
-        // Leave project (remove self from members)
-        group.MapPost("/{id:guid}/leave", async (Guid id, Guid userId, DatabaseContext db) =>
-        {
-            try
-            {
-                using var conn = db.CreateConnection();
-                await conn.OpenAsync();
-
-                // Check if user is the creator (creator cannot leave, must delete)
-                var checkSql = "SELECT ProductOwnerId FROM Projects WHERE Id = @Id";
-                using var checkCmd = new SqlCommand(checkSql, conn);
-                checkCmd.Parameters.AddWithValue("@Id", id);
-                var productOwnerId = await checkCmd.ExecuteScalarAsync() as Guid?;
-
-                if (productOwnerId == userId)
-                {
-                    return Results.Problem("El creador no puede abandonar el proyecto, solo eliminarlo", statusCode: 400);
-                }
-
-                // Remove user from project members
-                var deleteSql = "DELETE FROM ProjectMembers WHERE ProjectId = @ProjectId AND UserId = @UserId";
-                using var deleteCmd = new SqlCommand(deleteSql, conn);
-                deleteCmd.Parameters.AddWithValue("@ProjectId", id);
-                deleteCmd.Parameters.AddWithValue("@UserId", userId);
-                
-                var rowsAffected = await deleteCmd.ExecuteNonQueryAsync();
-                
-                if (rowsAffected == 0)
-                {
-                    return Results.NotFound("No eres miembro de este proyecto");
-                }
-
-                return Results.Ok(new { message = "Has abandonado el proyecto exitosamente" });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem($"Error al abandonar proyecto: {ex.Message}");
+                store.Save();
+                return Results.Ok(new { message = "Proyecto eliminado" });
             }
         });
     }
 
-    private static Project MapProject(SqlDataReader reader)
+    public static ProjectDto ToProjectDto(Project project, AppDataStore store)
     {
-        return new Project
+        var creator = store.Data.Users.FirstOrDefault(user => user.Id == project.CreatorId);
+        var members = store.Data.ProjectMembers
+            .Where(member => member.ProjectId == project.Id)
+            .Join(store.Data.Users, member => member.UserId, user => user.Id, (member, user) => new UserDto
+            {
+                Id = user.Id,
+                Name = user.Name,
+                Email = user.Email,
+                Role = user.Role,
+                CreatedAt = user.CreatedAt
+            })
+            .OrderBy(user => user.Name)
+            .ToList();
+
+        return new ProjectDto
         {
-            Id = (Guid)reader["Id"],
-            Name = reader["Name"].ToString()!,
-            Description = reader["Description"]?.ToString(),
-            Key = reader["Key"]?.ToString(),
-            Color = reader["Color"]?.ToString(),
-            Icon = reader["Icon"]?.ToString(),
-            ProductOwnerId = reader["ProductOwnerId"] as Guid?,
-            ScrumMasterId = reader["ScrumMasterId"] as Guid?,
-            CreatedAt = (DateTime)reader["CreatedAt"]
+            Id = project.Id,
+            Name = project.Name,
+            Description = project.Description,
+            Key = project.Key,
+            Color = project.Color,
+            Icon = project.Icon,
+            CreatorId = project.CreatorId,
+            ProductOwnerId = project.CreatorId,
+            CreatorName = creator?.Name,
+            CreatedAt = project.CreatedAt,
+            Members = members
         };
     }
-}
 
-public class AddMemberRequest
-{
-    public Guid UserId { get; set; }
+    public static void CreateNotification(AppDataStore store, string userId, string title, string message, string type, string? projectId, string? creatorId, string status)
+    {
+        store.Data.Notifications.Add(new Notification
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = userId,
+            Type = type,
+            Title = title,
+            Message = message,
+            ProjectId = projectId,
+            CreatorId = creatorId,
+            Status = status,
+            IsRead = false,
+            CreatedAt = DateTime.UtcNow
+        });
+    }
+
+    private static void AddMember(string projectId, string userId, string role, AppDataStore store)
+    {
+        if (store.Data.ProjectMembers.Any(member => member.ProjectId == projectId && member.UserId == userId))
+        {
+            return;
+        }
+
+        store.Data.ProjectMembers.Add(new ProjectMember
+        {
+            Id = Guid.NewGuid().ToString(),
+            ProjectId = projectId,
+            UserId = userId,
+            Role = role,
+            JoinedAt = DateTime.UtcNow
+        });
+    }
+
+    private static string BuildProjectKey(string name)
+    {
+        var letters = new string(name
+            .Where(char.IsLetterOrDigit)
+            .Take(4)
+            .ToArray())
+            .ToUpperInvariant();
+
+        return string.IsNullOrWhiteSpace(letters) ? "PROJ" : letters;
+    }
 }
