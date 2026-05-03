@@ -3719,6 +3719,8 @@ async function assignStoryToMember(storyId, memberId) {
         // Reload the board to reflect changes
         await loadBoard();
         
+        // Get member name for toast message
+        const project = projects.find(p => p.id === selectedProjectId);
         const member = memberId ? project?.members?.find(m => m.id === memberId) : null;
         showToast(member ? `Asignado a ${member.name}` : 'Sin asignar', 'success');
     } catch (error) {
