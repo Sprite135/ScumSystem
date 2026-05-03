@@ -69,8 +69,17 @@ public static class StoryRoutes
                     .OrderBy(member => member.Name)
                     .ToList();
 
-                var stories = store.Data.UserStories
-                    .Where(story => story.ProjectId == projectId)
+                var activeSprintIds = store.Data.Sprints
+                    .Where(sprint => sprint.ProjectId == projectId && sprint.Status == "Active")
+                    .Select(sprint => sprint.Id)
+                    .ToHashSet();
+
+                var sprintStoryQuery = store.Data.UserStories
+                    .Where(story => story.ProjectId == projectId
+                        && !string.IsNullOrWhiteSpace(story.SprintId)
+                        && activeSprintIds.Contains(story.SprintId!));
+
+                var stories = sprintStoryQuery
                     .OrderByDescending(story => story.UpdatedAt ?? story.CreatedAt)
                     .Select(story =>
                     {
@@ -79,6 +88,7 @@ public static class StoryRoutes
                         {
                             Id = story.Id,
                             ProjectId = story.ProjectId,
+                            SprintId = story.SprintId,
                             Title = story.Title,
                             Description = story.Description,
                             StoryPoints = story.StoryPoints,
@@ -194,12 +204,36 @@ public static class StoryRoutes
                     return Results.NotFound();
                 }
 
+                if (store.Data.Sprints.All(sprint => sprint.Id != sprintId))
+                {
+                    return Results.BadRequest("El sprint no existe");
+                }
+
                 story.SprintId = sprintId;
-                story.Status = "SprintBacklog";
+                story.Status = "Backlog";
                 story.UpdatedAt = DateTime.UtcNow;
                 store.Save();
 
                 return Results.Ok(new { message = "Historia movida al sprint" });
+            }
+        });
+
+        group.MapPost("/{id}/move-to-backlog", (string id, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
+                if (story is null)
+                {
+                    return Results.NotFound();
+                }
+
+                story.SprintId = null;
+                story.Status = "Backlog";
+                story.UpdatedAt = DateTime.UtcNow;
+                store.Save();
+
+                return Results.Ok(new { message = "Historia movida al backlog" });
             }
         });
 

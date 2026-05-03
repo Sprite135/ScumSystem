@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - Scrum System</title>
-    <link rel="stylesheet" href="css/styles.css?v=3801">
+    <link rel="stylesheet" href="css/styles.css?v=3852">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -229,6 +229,158 @@
         </div>
     </div>
 
+    <!-- Issue Detail Modal -->
+    <div id="issue-detail-modal" class="modal issue-detail-modal">
+        <div class="issue-detail-content">
+            <div class="issue-detail-toolbar">
+                <div class="issue-detail-key" id="issue-detail-key">PROY-000</div>
+                <div class="issue-detail-actions">
+                    <button class="btn btn-icon btn-small" onclick="editIssueInClassicModal()" title="Editar en formulario">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-icon btn-small" onclick="hideModal('issue-detail-modal')" title="Cerrar">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div id="issue-detail-loading" class="issue-detail-loading">
+                Cargando actividad...
+            </div>
+
+            <div id="issue-detail-body" class="issue-detail-layout" style="display: none;">
+                <main class="issue-detail-main">
+                    <button class="issue-add-top" type="button" title="Anadir">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                    <input type="text" id="issue-detail-title" class="issue-title-input" maxlength="255">
+
+                    <section class="issue-section issue-section-collapsible">
+                        <h4><i class="fas fa-chevron-down"></i> Descripcion</h4>
+                        <textarea id="issue-detail-description" class="issue-description-input" rows="5" placeholder="Anadir descripcion"></textarea>
+                    </section>
+
+                    <section class="issue-section issue-section-collapsible">
+                        <div class="issue-section-header">
+                            <h4><i class="fas fa-chevron-down"></i> Subtareas</h4>
+                            <div class="issue-subtask-tools">
+                                <button type="button" title="Mas opciones"><i class="fas fa-ellipsis-h"></i></button>
+                                <button type="button" title="Vista de tabla"><i class="fas fa-columns"></i></button>
+                                <button type="button" title="Anadir subtarea"><i class="fas fa-plus"></i></button>
+                            </div>
+                        </div>
+                        <div class="issue-subtask-progress">
+                            <div class="issue-subtask-progress-track">
+                                <div id="issue-subtask-progress-bar"></div>
+                            </div>
+                            <span id="issue-subtask-progress-text">0 % completado</span>
+                        </div>
+                        <div id="issue-subtasks-list" class="issue-subtasks-list"></div>
+                        <div class="issue-subtask-create">
+                            <input type="text" id="issue-new-subtask-title" placeholder="Que hay que hacer?">
+                            <button class="issue-subtask-type" type="button"><i class="far fa-check-square"></i> Subtarea</button>
+                            <button class="issue-subtask-submit" type="button" onclick="createIssueSubtask()" title="Crear subtarea">
+                                <i class="fas fa-level-down-alt"></i>
+                            </button>
+                        </div>
+                        <button class="issue-existing-link" type="button"><i class="fas fa-search"></i> Elegir una existente</button>
+                    </section>
+
+                    <section class="issue-section">
+                        <h4>Actividades vinculadas</h4>
+                        <button class="issue-link-placeholder" type="button">Anadir actividad vinculada</button>
+                    </section>
+
+                    <section class="issue-section">
+                        <h4>Actividad</h4>
+                        <div class="issue-activity-tabs">
+                            <button class="active" type="button">Todo</button>
+                            <button type="button">Comentarios</button>
+                            <button type="button">Historial</button>
+                        </div>
+                        <div class="issue-comment-box">
+                            <div class="issue-avatar" id="issue-current-user-avatar">U</div>
+                            <div class="issue-comment-input">Anadir un comentario...</div>
+                        </div>
+                        <div class="issue-history-row">
+                            <div class="issue-avatar" id="issue-history-avatar">U</div>
+                            <div><strong id="issue-history-user">Usuario</strong> ha actualizado la actividad</div>
+                        </div>
+                    </section>
+                </main>
+
+                <aside class="issue-detail-side">
+                    <div class="issue-status-row">
+                        <select id="issue-detail-status" onchange="updateIssueStatusFromDetail()">
+                            <option value="Backlog">Tareas por hacer</option>
+                            <option value="InProgress">En curso</option>
+                            <option value="Done">Hecho</option>
+                        </select>
+                    </div>
+
+                    <div class="issue-panel">
+                        <div class="issue-panel-title">
+                            <i class="fas fa-chevron-down"></i>
+                            <span>Detalles</span>
+                        </div>
+                        <div class="issue-field">
+                            <span>Persona asignada</span>
+                            <select id="issue-detail-assignee"></select>
+                        </div>
+                        <div class="issue-field">
+                            <span>Etiquetas</span>
+                            <strong>Ninguno</strong>
+                        </div>
+                        <div class="issue-field">
+                            <span>Principal</span>
+                            <strong>Ninguno</strong>
+                        </div>
+                        <div class="issue-field">
+                            <span>Fecha de vencimiento</span>
+                            <strong>Ninguno</strong>
+                        </div>
+                        <div class="issue-field">
+                            <span>Team</span>
+                            <strong>Ninguno</strong>
+                        </div>
+                        <div class="issue-field">
+                            <span>Start date</span>
+                            <strong>Ninguno</strong>
+                        </div>
+                        <div class="issue-field">
+                            <span>Prioridad</span>
+                            <select id="issue-detail-priority">
+                                <option value="0">Baja</option>
+                                <option value="1">Media</option>
+                                <option value="2">Alta</option>
+                                <option value="3">Critica</option>
+                            </select>
+                        </div>
+                        <div class="issue-field">
+                            <span>Story points</span>
+                            <input type="number" id="issue-detail-points" min="0" max="100">
+                        </div>
+                        <div class="issue-field">
+                            <span>Sprint</span>
+                            <strong id="issue-detail-sprint">Ninguno</strong>
+                        </div>
+                        <div class="issue-field">
+                            <span>Informador</span>
+                            <strong id="issue-detail-reporter">Ninguno</strong>
+                        </div>
+                    </div>
+
+                    <div class="issue-detail-dates">
+                        <div id="issue-detail-created">Creado: -</div>
+                        <div id="issue-detail-updated">Actualizado: -</div>
+                    </div>
+
+                    <button class="btn btn-primary issue-save-btn" onclick="saveIssueDetail()">Guardar cambios</button>
+                </aside>
+            </div>
+        </div>
+    </div>
+
     <!-- Notifications Modal -->
     <div id="notifications-modal" class="modal">
         <div class="modal-content">
@@ -392,7 +544,7 @@
                 <form id="start-sprint-form">
                     <div class="form-group">
                         <label for="sprint-name">Nombre del sprint *</label>
-                        <input type="text" id="sprint-name" name="sprint-name" required placeholder="">
+                        <input type="text" id="sprint-name" name="sprint-name" class="sprint-name-input" required placeholder="" autocomplete="off">
                     </div>
                     <div class="form-group">
                         <label for="sprint-duration">Duración *</label>
@@ -433,6 +585,6 @@
         </div>
     </div>
 
-    <script src="js/app.js?v=3836"></script>
+    <script src="js/app.js?v=3852"></script>
 </body>
 </html>

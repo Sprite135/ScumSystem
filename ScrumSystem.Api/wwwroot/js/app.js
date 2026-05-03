@@ -520,11 +520,22 @@ function loadProjectContent() {
 }
 
 async function loadProjectBoard() {
+    console.log('=== loadProjectBoard START ===');
+    console.log('selectedProjectId:', selectedProjectId);
+    
     const content = document.getElementById('project-content');
-    if (!content || !selectedProjectId) return;
+    if (!content || !selectedProjectId) {
+        console.log('No content or selectedProjectId');
+        return;
+    }
     
     try {
+        console.log('Fetching board data for project:', selectedProjectId);
         const data = await apiRequest(`/api/stories/project/${selectedProjectId}/board`);
+        console.log('Board data received:', data);
+        console.log('Stories count:', data.stories?.length || 0);
+        console.log('Members count:', data.members?.length || 0);
+        
         boardMembers = data.members || [];
         
         // Render kanban board HTML
@@ -1403,18 +1414,33 @@ async function loadBacklog() {
     }
     
     try {
-        console.log('Fetching stories for project:', selectedProjectId);
-        const stories = await apiRequest(`/api/stories/project/${selectedProjectId}/backlog`);
+        console.log('Fetching sprints and stories for project:', selectedProjectId);
+        
+        // 1. Obtener sprints del proyecto
+        const sprints = await apiRequest(`/api/sprints/project/${selectedProjectId}`);
+        console.log('Sprints received:', sprints);
+        
+        // 2. Obtener TODAS las historias del proyecto (incluyendo las de sprints)
+        const allStories = await apiRequest(`/api/stories/project/${selectedProjectId}`);
+        console.log('All stories received:', allStories);
+        
+        // 3. Separar historias: backlog (sin sprint) y las que están en sprints
+        const backlogStories = allStories.filter(s => !s.sprintId || s.sprintId === '');
+        const sprintStories = allStories.filter(s => s.sprintId && s.sprintId !== '');
+        
+        console.log('Backlog stories:', backlogStories.length, 'Sprint stories:', sprintStories.length);
+        
         const project = projects.find(p => p.id === selectedProjectId);
-        console.log('Stories received:', stories);
-        renderProjectBacklog(stories || [], project?.members || []);
+        
+        // 4. Renderizar backlog con sprints e historias
+        renderProjectBacklog(sprints || [], allStories || [], project?.members || []);
     } catch (error) {
         console.error('Error loading project backlog:', error);
         content.innerHTML = '<p class="empty-state">Error al cargar backlog</p>';
     }
 }
 
-function renderProjectBacklog(stories, members) {
+function renderProjectBacklog(sprints, stories, members) {
     const content = document.getElementById('project-content');
     if (!content) return;
     
@@ -1439,8 +1465,9 @@ function renderProjectBacklog(stories, members) {
         projectKey = 'PROJ';
     }
     
-    // Group stories by status
-    const backlogStories = stories.filter(s => s.status === 'Backlog');
+    // Jira-like split: real sprints live above, unscheduled work stays in backlog.
+    const sprint1Stories = [];
+    const backlogStories = stories.filter(s => (!s.sprintId || s.sprintId === '') && s.status === 'Backlog');
     const inProgressStories = stories.filter(s => s.status === 'InProgress');
     const doneStories = stories.filter(s => s.status === 'Done');
     
@@ -1449,9 +1476,126 @@ function renderProjectBacklog(stories, members) {
     const inProgressPoints = inProgressStories.reduce((sum, s) => sum + (s.storyPoints || 0), 0);
     const donePoints = doneStories.reduce((sum, s) => sum + (s.storyPoints || 0), 0);
     
+    // Generate HTML for sprints dinámicos (excluyendo Sprint 1 que se maneja separado)
+    let dynamicSprintsHtml = '';
+    if (sprints && sprints.length > 0) {
+        // Filtrar sprints que no sean Sprint 1 y ordenar por fecha de creación
+        const dynamicSprints = sprints
+            .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+        
+        dynamicSprints.forEach(sprint => {
+            // Obtener historias asociadas a este sprint
+            const sprintStories = stories.filter(s => s.sprintId === sprint.id);
+            const sprintStoryCount = sprintStories.length;
+            
+            // Calcular puntos por estado
+            const sprintTodo = sprintStories.filter(s => s.status === 'Backlog').length;
+            const sprintInProgress = sprintStories.filter(s => s.status === 'InProgress').length;
+            const sprintDone = sprintStories.filter(s => s.status === 'Done').length;
+            
+            const sprintId = `sprint-${sprint.id}`;
+            
+            dynamicSprintsHtml += `
+                <div class="sprint-section" data-drop-target-for-element="true" id="${sprintId}" data-sprint-id="${sprint.id}">
+                    <div class="backlog-section-header">
+                        <div class="backlog-header-left">
+                            <label class="backlog-checkbox-label">
+                                <input type="checkbox" class="backlog-checkbox" aria-label="Seleccionar todas las actividades en sprint">
+                                <svg width="20" height="20" viewBox="0 0 24 24" role="presentation">
+                                    <g fill-rule="evenodd">
+                                        <rect fill="currentColor" x="5.5" y="5.5" width="13" height="13" rx="1.5"></rect>
+                                    </g>
+                                </svg>
+                            </label>
+                            <button class="backlog-collapse-btn" aria-expanded="true" onclick="toggleDynamicSprintSection(this, '${sprintId}')" title="Contraer">
+                                <svg fill="none" viewBox="0 0 16 16" role="presentation" style="transform: rotate(0deg); transition: transform 0.2s;">
+                                    <path fill="currentcolor" d="m14.53 6.03-6 6a.75.75 0 0 1-1.004.052l-.056-.052-6-6 1.06-1.06L8 10.44l5.47-5.47z"></path>
+                                </svg>
+                            </button>
+                            <span class="backlog-section-title">${escapeHtml(sprint.name)} <span class="activity-count">(${sprintStoryCount} actividades)</span></span>
+                        </div>
+                        <div class="backlog-header-right">
+                            <div class="backlog-badges">
+                                <div class="backlog-badge todo" title="Pendiente">${sprintTodo}</div>
+                                <div class="backlog-badge inprogress" title="En curso">${sprintInProgress}</div>
+                                <div class="backlog-badge done" title="Hecho">${sprintDone}</div>
+                            </div>
+                            <button type="button" class="create-sprint-btn" onclick="showStartSprintModalForSprint('${sprintId}')" ${sprintStoryCount === 0 ? 'disabled' : ''}>Iniciar sprint</button>
+                            <div class="sprint-menu-container">
+                                <button type="button" class="sprint-menu-btn" onclick="toggleSprintOptionsMenu(event, '${sprintId}')" title="Más opciones">
+                                    <svg fill="none" viewBox="0 0 16 16" role="presentation">
+                                        <path fill="currentcolor" fill-rule="evenodd" d="M8 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4M6 8a1 1 0 1 1 2 0 1 1 0 0 1-2 0m5-2a2 2 0 1 1 0 4 2 2 0 0 1 0-4m0 1a1 1 0 1 0 0 2 1 1 0 0 0 0-2M4 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4m0 1a1 1 0 1 1 0 2 1 1 0 0 1 0-2" clip-rule="evenodd"></path>
+                                    </svg>
+                                </button>
+                                <div class="sprint-options-menu" id="sprint-options-menu-${sprintId}" style="display: none;" onclick="event.stopPropagation()">
+                                    <button class="sprint-option-item" onclick="event.stopPropagation(); editSprint('${sprintId}');">
+                                        <svg fill="none" viewBox="0 0 16 16" role="presentation">
+                                            <path fill="currentcolor" fill-rule="evenodd" d="M11.586.854a2 2 0 0 1 2.828 0l.732.732a2 2 0 0 1 0 2.828L10.01 9.551a2 2 0 0 1-.864.51l-3.189.91a.75.75 0 0 1-.927-.927l.91-3.189a2 2 0 0 1 .51-.864zm1.768 1.06a.5.5 0 0 0-.708 0l-.585.586L13.5 3.94l.586-.586a.5.5 0 0 0 0-.708zM12.439 5 11 3.56 7.51 7.052a.5.5 0 0 0-.128.216l-.54 1.891 1.89-.54a.5.5 0 0 0 .217-.127zM3 2.501a.5.5 0 0 0-.5.5v10a.5.5 0 0 0 .5.5h10a.5.5 0 0 0 .5-.5V10H15v3.001a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2v-10a2 2 0 0 1 2-2h3v1.5z" clip-rule="evenodd"></path>
+                                        </svg>
+                                        Editar sprint
+                                    </button>
+                                    <button class="sprint-option-item delete" onclick="handleDeleteSprintClick(event, '${sprintId}')">
+                                        <svg fill="none" viewBox="0 0 16 16" role="presentation">
+                                            <path fill="currentcolor" fill-rule="evenodd" d="M10 2a1 1 0 0 1 1 1v1h2.5a.5.5 0 0 1 0 1h-.538l-.566 8.486A2.5 2.5 0 0 1 9.9 15.6H6.1a2.5 2.5 0 0 1-2.496-2.114L3.038 5H2.5a.5.5 0 0 1 0-1H5V3a1 1 0 0 1 1-1h4m-5 3h9l-.56 8.397a1.5 1.5 0 0 1-1.498 1.268H6.057a1.5 1.5 0 0 1-1.498-1.268zM9 3H7v1h2z" clip-rule="evenodd"></path>
+                                        </svg>
+                                        Eliminar sprint
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sprint-content" id="sprint-content-${sprintId}" ondragover="allowBacklogDrop(event)" ondrop="dropStoryOnSprint(event, '${sprintId}')">
+                        ${sprintStories.map(story => createBacklogStoryCard(story, members, projectKey)).join('')}
+                    </div>
+                    <div class="backlog-nudge-container" id="create-story-container-${sprintId}">
+                        <div class="create-story-form" id="create-story-form-${sprintId}" style="display: none;">
+                            <div class="create-form-row">
+                                <label class="story-checkbox-label">
+                                    <input type="checkbox" class="story-checkbox" aria-label="Seleccionar esta historia">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" role="presentation">
+                                        <g fill-rule="evenodd">
+                                            <rect fill="currentColor" x="5.5" y="5.5" width="13" height="13" rx="1.5"></rect>
+                                        </g>
+                                    </svg>
+                                </label>
+                                <input type="text" class="story-title-input" aria-label="Work item summary" maxlength="255" placeholder="Describe qué hay que hacer." id="new-story-title-${sprintId}">
+                                <button class="due-date-btn" aria-label="Fecha de vencimiento" type="button">
+                                    <svg fill="none" viewBox="0 0 16 16" role="presentation">
+                                        <path fill="currentcolor" fill-rule="evenodd" d="M4.5 2.5v2H6v-2h4v2h1.5v-2H13a.5.5 0 0 1 .5.5v3h-11V3a.5.5 0 0 1 .5-.5zm-2 5V13a.5.5 0 0 0 .5.5h10a.5.5 0 0 0 .5-.5V7.5zm9-6.5H13a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1.5V0H6v1h4V0h1.5z" clip-rule="evenodd"></path>
+                                    </svg>
+                                </button>
+                                <button class="assignee-btn" aria-label="Sin asignar" type="button">
+                                    <div class="assignee-avatar">
+                                        <svg fill="none" viewBox="-4 -4 24 24" role="presentation">
+                                            <path fill="currentcolor" fill-rule="evenodd" d="M8 1.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5M4 4a4 4 0 1 1 8 0 4 4 0 0 1-8 0m-2 9a3.75 3.75 0 0 1 3.75-3.75h4.5A3.75 3.75 0 0 1 14 13v2h-1.5v-2a2.25 2.25 0 0 0-2.25-2.25h-4.5A2.25 2.25 0 0 0 3.5 13v2H2z" clip-rule="evenodd"></path>
+                                        </svg>
+                                    </div>
+                                </button>
+                                <button class="create-submit-btn" type="button" disabled onclick="createStoryForSprint('${sprintId}')">
+                                    <span>Crear</span>
+                                    <svg fill="none" viewBox="0 0 16 16" role="presentation">
+                                        <path fill="currentcolor" fill-rule="evenodd" d="M12.5 8V3H14v5.438c0 .586-.476 1.062-1.062 1.062H4.56l2.72 2.72-1.061 1.06-4-4a.75.75 0 0 1 0-1.06l4-4 1.06 1.06L4.56 8z" clip-rule="evenodd"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="create-story-trigger" id="create-story-trigger-${sprintId}">
+                            <button class="create-story-btn" onclick="showCreateStoryFormForSprint('${sprintId}')">
+                                <svg fill="none" viewBox="0 0 16 16" role="presentation">
+                                    <path fill="currentcolor" fill-rule="evenodd" d="M7.25 8.75V15h1.5V8.75H15v-1.5H8.75V1h-1.5v6.25H1v1.5z" clip-rule="evenodd"></path>
+                                </svg>
+                                Crear
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+    
     content.innerHTML = `
         <div class="backlog-container">
-            <!-- Sprint Section -->
+            <!-- Sprint 1 Section -->
             <div class="sprint-section" data-drop-target-for-element="true">
                 <div class="backlog-section-header">
                     <div class="backlog-header-left">
@@ -1468,15 +1612,15 @@ function renderProjectBacklog(stories, members) {
                                 <path fill="currentcolor" d="m14.53 6.03-6 6a.75.75 0 0 1-1.004.052l-.056-.052-6-6 1.06-1.06L8 10.44l5.47-5.47z"></path>
                             </svg>
                         </button>
-                        <span class="backlog-section-title">Sprint 1 <span class="activity-count">(${stories.length} actividades)</span></span>
+                        <span class="backlog-section-title">Sprint 1 <span class="activity-count">(${sprint1Stories.length} actividades)</span></span>
                     </div>
                     <div class="backlog-header-right">
                         <div class="backlog-badges">
-                            <div class="backlog-badge todo" title="Pendiente">${backlogPoints}</div>
-                            <div class="backlog-badge inprogress" title="En curso">${inProgressPoints}</div>
-                            <div class="backlog-badge done" title="Hecho">${donePoints}</div>
+                            <div class="backlog-badge todo" title="Pendiente">${sprint1Stories.filter(s => s.status === 'Backlog').length}</div>
+                            <div class="backlog-badge inprogress" title="En curso">${sprint1Stories.filter(s => s.status === 'InProgress').length}</div>
+                            <div class="backlog-badge done" title="Hecho">${sprint1Stories.filter(s => s.status === 'Done').length}</div>
                         </div>
-                        <button type="button" class="create-sprint-btn" onclick="showStartSprintModal(${stories.length}, 'Sprint 1')" ${stories.length === 0 ? 'disabled' : ''}>Iniciar sprint</button>
+                        <button type="button" class="create-sprint-btn" onclick="showStartSprintModalForSprint('sprint-1')" ${sprint1Stories.length === 0 ? 'disabled' : ''}>Iniciar sprint</button>
                         <div class="sprint-menu-container">
                             <button type="button" class="sprint-menu-btn" onclick="toggleSprintOptionsMenu(event, 'sprint-1')" title="Más opciones">
                                 <svg fill="none" viewBox="0 0 16 16" role="presentation">
@@ -1546,6 +1690,9 @@ function renderProjectBacklog(stories, members) {
                 </div>
             </div>
             
+            <!-- Dynamic Sprints -->
+            ${dynamicSprintsHtml}
+            
             <!-- Backlog Section -->
             <div class="backlog-section" data-drop-target-for-element="true">
                 <div class="backlog-section-header">
@@ -1574,7 +1721,7 @@ function renderProjectBacklog(stories, members) {
                         <button type="button" class="create-sprint-btn" onclick="createSprintFromBacklog()">Crear sprint</button>
                     </div>
                 </div>
-                <div class="backlog-content" id="backlog-content">
+                <div class="backlog-content" id="backlog-content" ondragover="allowBacklogDrop(event)" ondrop="dropStoryOnBacklog(event)">
                     <!-- Backlog stories will be rendered here -->
                 </div>
                 <div class="backlog-nudge-container" id="backlog-create-container">
@@ -1622,10 +1769,10 @@ function renderProjectBacklog(stories, members) {
         </div>
     `;
     
-    // Render stories in sprint content
+    // Render stories in sprint content (Sprint 1 - only stories without sprintId)
     const sprintContent = document.getElementById('sprint-content');
     if (sprintContent) {
-        sprintContent.innerHTML = stories.map(story => createBacklogStoryCard(story, members, projectKey)).join('');
+        sprintContent.innerHTML = sprint1Stories.map(story => createBacklogStoryCard(story, members, projectKey)).join('');
     }
     
     // Render backlog stories
@@ -1633,6 +1780,9 @@ function renderProjectBacklog(stories, members) {
     if (backlogContent) {
         backlogContent.innerHTML = backlogStories.map(story => createBacklogStoryCard(story, members, projectKey)).join('');
     }
+
+    const conceptualSprint = content.querySelector('.sprint-section:not([data-sprint-id])');
+    if (conceptualSprint) conceptualSprint.remove();
 }
 
 function createBacklogStoryCard(story, members, projectKey) {
@@ -1660,7 +1810,7 @@ function createBacklogStoryCard(story, members, projectKey) {
     const statusLabel = statusLabels[story.status] || 'TAREAS POR HACER';
     
     return `
-        <div class="backlog-story-card" data-story-id="${story.id}">
+        <div class="backlog-story-card" data-story-id="${story.id}" draggable="true" ondragstart="dragBacklogStory(event, '${story.id}')">
             <div class="story-left">
                 <label class="story-checkbox-label">
                     <input type="checkbox" class="story-checkbox" id="story-${story.id}">
@@ -1723,6 +1873,53 @@ function createBacklogStoryCard(story, members, projectKey) {
             </div>
         </div>
     `;
+}
+
+function dragBacklogStory(event, storyId) {
+    event.dataTransfer.setData('storyId', storyId);
+    event.dataTransfer.effectAllowed = 'move';
+}
+
+function allowBacklogDrop(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+}
+
+async function dropStoryOnSprint(event, sprintId) {
+    event.preventDefault();
+    const storyId = event.dataTransfer.getData('storyId');
+    const sprintSection = document.getElementById(sprintId);
+    const actualSprintId = sprintSection?.dataset.sprintId;
+
+    if (!storyId || !actualSprintId) return;
+
+    try {
+        await apiRequest(`/api/stories/${storyId}/move-to-sprint?sprintId=${encodeURIComponent(actualSprintId)}`, {
+            method: 'POST'
+        });
+        showToast('Historia agregada al sprint', 'success');
+        await loadBacklog();
+    } catch (error) {
+        console.error('Error moving story to sprint:', error);
+        showToast('Error al agregar al sprint: ' + error.message, 'error');
+    }
+}
+
+async function dropStoryOnBacklog(event) {
+    event.preventDefault();
+    const storyId = event.dataTransfer.getData('storyId');
+    if (!storyId) return;
+
+    try {
+        await apiRequest(`/api/stories/${storyId}/move-to-backlog`, {
+            method: 'POST'
+        });
+        showToast('Historia devuelta al backlog', 'success');
+        await loadBacklog();
+    } catch (error) {
+        console.error('Error moving story to backlog:', error);
+        showToast('Error al mover al backlog: ' + error.message, 'error');
+    }
 }
 
 function getStoryTypeLabel(type) {
@@ -1805,67 +2002,121 @@ function toggleStoryActionsMenu(event, storyId) {
 }
 
 async function deleteBacklogStory(storyId) {
+    console.log('=== deleteBacklogStory START ===');
+    console.log('storyId:', storyId);
+    
     // Close the menu
     const menu = document.getElementById(`story-actions-menu-${storyId}`);
     if (menu) menu.style.display = 'none';
     
     // Confirm deletion
     if (!confirm('¿Estás seguro de que deseas eliminar esta historia?')) {
+        console.log('Deletion cancelled by user');
         return;
     }
     
     try {
-        // 1. Eliminar en el backend
-        await apiRequest(`/api/stories/${storyId}`, { method: 'DELETE' });
-        
-        // 2. Eliminar la historia del DOM (solo esa historia, sin recargar)
+        // 1. Obtener la tarjeta y determinar su ubicación ANTES de eliminar
         const storyCard = document.querySelector(`[data-story-id="${storyId}"]`);
-        if (storyCard) {
-            // Determinar si está en backlog o en un sprint
-            const backlogContent = document.getElementById('backlog-content');
-            const sprintContent = storyCard.closest('[id^="sprint-content-"]');
-            
-            if (sprintContent || (backlogContent && backlogContent.contains(storyCard))) {
-                // Eliminar solo la tarjeta del DOM
-                storyCard.remove();
-                
-                // Actualizar contadores según dónde estaba
-                if (backlogContent && backlogContent.contains(storyCard)) {
-                    // Era del backlog - actualizar contador del backlog
-                    const activityCount = backlogContent.querySelectorAll('.backlog-story-card').length;
-                    const backlogSection = document.querySelector('.backlog-section');
-                    const countSpan = backlogSection?.querySelector('.activity-count');
-                    if (countSpan) {
-                        countSpan.textContent = `(${activityCount} actividades)`;
-                    }
-                    
-                    // Actualizar badge
-                    const todoBadge = backlogSection?.querySelector('.backlog-badge.todo');
-                    if (todoBadge) {
-                        todoBadge.textContent = activityCount;
-                    }
-                } else if (sprintContent) {
-                    // Era de un sprint - actualizar contador del sprint
-                    const activityCount = sprintContent.querySelectorAll('.backlog-story-card').length;
-                    const sprintSection = sprintContent.closest('.sprint-section');
-                    const countSpan = sprintSection?.querySelector('.activity-count');
-                    if (countSpan) {
-                        countSpan.textContent = `(${activityCount} actividades)`;
-                    }
-                    
-                    // Actualizar badge
-                    const todoBadge = sprintSection?.querySelector('.backlog-badge.todo');
-                    if (todoBadge) {
-                        todoBadge.textContent = activityCount;
-                    }
-                }
+        console.log('storyCard found:', storyCard);
+        
+        if (!storyCard) {
+            console.error('Story card not found for ID:', storyId);
+            showToast('Historia no encontrada en el DOM', 'error');
+            return;
+        }
+        
+        // Determinar dónde está la historia ANTES de eliminarla
+        const backlogContent = document.getElementById('backlog-content');
+        const sprintContent1 = document.getElementById('sprint-content'); // Sprint 1
+        const sprintContentDynamic = storyCard.closest('[id^="sprint-content-sprint-"]'); // Sprints dinámicos
+        
+        console.log('backlogContent:', backlogContent);
+        console.log('sprintContent1:', sprintContent1);
+        console.log('sprintContentDynamic:', sprintContentDynamic);
+        
+        // Guardar la ubicación para actualizar contadores después
+        let location = null;
+        let targetElement = null;
+        
+        if (backlogContent && backlogContent.contains(storyCard)) {
+            location = 'backlog';
+            targetElement = backlogContent;
+            console.log('Location detected: backlog');
+        } else if (sprintContent1 && sprintContent1.contains(storyCard)) {
+            location = 'sprint1';
+            targetElement = sprintContent1;
+            console.log('Location detected: sprint1');
+        } else if (sprintContentDynamic) {
+            location = 'sprintDynamic';
+            targetElement = sprintContentDynamic;
+            console.log('Location detected: sprintDynamic');
+        } else {
+            console.log('WARNING: Could not detect location!');
+        }
+        
+        // 2. Eliminar en el backend
+        console.log('Deleting from backend:', storyId);
+        await apiRequest(`/api/stories/${storyId}`, { method: 'DELETE' });
+        console.log('Backend deletion successful');
+        
+        // 3. Eliminar la tarjeta del DOM
+        storyCard.remove();
+        console.log('DOM removal successful');
+        
+        // 4. Actualizar contadores según la ubicación guardada
+        console.log('Updating counters for location:', location);
+        if (location === 'backlog' && targetElement) {
+            const activityCount = targetElement.querySelectorAll('.backlog-story-card').length;
+            console.log('Backlog activity count:', activityCount);
+            const backlogSection = document.querySelector('.backlog-section');
+            const countSpan = backlogSection?.querySelector('.activity-count');
+            if (countSpan) {
+                countSpan.textContent = `(${activityCount} actividades)`;
+            }
+            const todoBadge = backlogSection?.querySelector('.backlog-badge.todo');
+            if (todoBadge) {
+                todoBadge.textContent = activityCount;
+            }
+        } else if (location === 'sprint1' && targetElement) {
+            const activityCount = targetElement.querySelectorAll('.backlog-story-card').length;
+            console.log('Sprint1 activity count:', activityCount);
+            const sprintSection = document.getElementById('sprint-1')?.closest('.sprint-section');
+            const countSpan = sprintSection?.querySelector('.activity-count');
+            if (countSpan) {
+                countSpan.textContent = `(${activityCount} actividades)`;
+            }
+            const todoBadge = sprintSection?.querySelector('.backlog-badge.todo');
+            if (todoBadge) {
+                todoBadge.textContent = activityCount;
+            }
+            const startSprintBtn = sprintSection?.querySelector('.create-sprint-btn');
+            if (startSprintBtn) {
+                startSprintBtn.disabled = activityCount === 0;
+            }
+        } else if (location === 'sprintDynamic' && targetElement) {
+            const activityCount = targetElement.querySelectorAll('.backlog-story-card').length;
+            console.log('SprintDynamic activity count:', activityCount);
+            const sprintSection = targetElement.closest('.sprint-section');
+            const countSpan = sprintSection?.querySelector('.activity-count');
+            if (countSpan) {
+                countSpan.textContent = `(${activityCount} actividades)`;
+            }
+            const todoBadge = sprintSection?.querySelector('.backlog-badge.todo');
+            if (todoBadge) {
+                todoBadge.textContent = activityCount;
+            }
+            const startSprintBtn = sprintSection?.querySelector('.create-sprint-btn');
+            if (startSprintBtn) {
+                startSprintBtn.disabled = activityCount === 0;
             }
         }
         
         showToast('Historia eliminada', 'success');
+        console.log('=== deleteBacklogStory END ===');
     } catch (error) {
         console.error('Error deleting story:', error);
-        showToast('Error al eliminar historia', 'error');
+        showToast('Error al eliminar historia: ' + error.message, 'error');
     }
 }
 
@@ -2053,6 +2304,7 @@ async function createBacklogStory() {
 
         showToast('Historia creada en backlog: ' + title, 'success');
         hideCreateStoryFormBacklog();
+        await loadBacklog();
         
     } catch (error) {
         console.error('Error creating backlog story:', error);
@@ -2103,6 +2355,7 @@ async function createSprintFromBacklog() {
         
         if (sprintElement) {
             showToast(`${sprintName} creado exitosamente`, 'success');
+            await loadBacklog();
         } else {
             showToast(`${sprintName} creado pero no se pudo mostrar`, 'warning');
         }
@@ -2245,6 +2498,7 @@ async function createStoryForSprint(sprintId) {
 
         showToast('Historia creada: ' + title, 'success');
         hideCreateStoryFormForSprint(sprintId);
+        await loadBacklog();
         
         // 3. Habilitar botón "Iniciar sprint" si hay historias
         const sprintSection = document.getElementById(sprintId);
@@ -2321,7 +2575,7 @@ function editSprint(sprintId) {
     }
 }
 
-function handleDeleteSprintClick(event, sprintId) {
+async function handleDeleteSprintClick(event, sprintId) {
     event.stopPropagation();
     console.log('=== handleDeleteSprintClick START ===');
     console.log('Sprint ID:', sprintId);
@@ -2337,23 +2591,10 @@ function handleDeleteSprintClick(event, sprintId) {
         return;
     }
     
-    // Get sprint section - try by ID first
+    // Get sprint section
     let sprintSection = document.getElementById(sprintId);
-    console.log('Found sprintSection by ID:', sprintSection);
-    
-    // If not found by ID, try to find by data attribute or search in container
     if (!sprintSection) {
         sprintSection = document.querySelector(`[id="${sprintId}"]`);
-        console.log('Found sprintSection by querySelector:', sprintSection);
-    }
-    
-    // Try to find sprint by searching all sprint sections
-    if (!sprintSection) {
-        const allSprints = document.querySelectorAll('.sprint-section');
-        console.log('All sprint sections found:', allSprints.length);
-        allSprints.forEach((sprint, index) => {
-            console.log(`Sprint ${index}:`, sprint.id);
-        });
     }
     
     if (!sprintSection) {
@@ -2362,40 +2603,49 @@ function handleDeleteSprintClick(event, sprintId) {
         return;
     }
     
-    // Move stories to backlog if any exist
-    const sprintStories = sprintSection.querySelectorAll('.backlog-story-card');
-    console.log('Stories found in sprint:', sprintStories.length);
-    if (sprintStories.length > 0) {
-        const backlogContent = document.getElementById('backlog-content');
-        if (backlogContent) {
-            sprintStories.forEach(story => {
-                // Clone and append to backlog
-                const clonedStory = story.cloneNode(true);
-                backlogContent.appendChild(clonedStory);
+    // Get the actual sprint ID from the dataset
+    const actualSprintId = sprintSection.dataset.sprintId;
+    console.log('Actual sprint ID from dataset:', actualSprintId);
+    
+    try {
+        // 1. Eliminar sprint del backend (si tiene ID real)
+        if (actualSprintId && actualSprintId !== 'null' && actualSprintId !== 'undefined') {
+            console.log('Deleting sprint from backend:', actualSprintId);
+            await apiRequest(`/api/sprints/${actualSprintId}`, {
+                method: 'DELETE'
             });
+            console.log('Sprint deleted from backend successfully');
+        } else {
+            console.log('No actual sprint ID found, skipping backend deletion');
         }
-    }
-    
-    // Remove the sprint section using parentNode.removeChild for better compatibility
-    console.log('Attempting to remove sprint section. Parent:', sprintSection.parentNode);
-    console.log('Sprint section before removal:', sprintSection);
-    console.log('Sprint section class:', sprintSection.className);
-    
-    if (sprintSection.parentNode) {
-        sprintSection.parentNode.removeChild(sprintSection);
-        console.log('Sprint removed successfully');
-        showToast('Sprint eliminado. Las historias se movieron al backlog.', 'success');
         
-        // Verify removal
-        const stillExists = document.getElementById(sprintId);
-        console.log('Sprint still exists after removal:', stillExists);
-    } else {
-        showToast('Error al eliminar el sprint', 'error');
-        console.error('No parent node found for sprint:', sprintId);
+        // 2. Mover historias al backlog en el frontend
+        const sprintStories = sprintSection.querySelectorAll('.backlog-story-card');
+        console.log('Stories found in sprint:', sprintStories.length);
+        if (sprintStories.length > 0) {
+            const backlogContent = document.getElementById('backlog-content');
+            if (backlogContent) {
+                sprintStories.forEach(story => {
+                    const clonedStory = story.cloneNode(true);
+                    backlogContent.appendChild(clonedStory);
+                });
+            }
+        }
+        
+        // 3. Eliminar sección del sprint del DOM
+        if (sprintSection.parentNode) {
+            sprintSection.parentNode.removeChild(sprintSection);
+            console.log('Sprint removed from DOM');
+            showToast('Sprint eliminado permanentemente', 'success');
+        }
+        
+        // 4. Actualizar contadores
+        updateActivityCount();
+        
+    } catch (error) {
+        console.error('Error deleting sprint:', error);
+        showToast('Error al eliminar sprint: ' + error.message, 'error');
     }
-    
-    // Update activity counts
-    updateActivityCount();
     
     console.log('=== handleDeleteSprintClick END ===');
 }
@@ -2476,15 +2726,27 @@ function deleteSprint(sprintId) {
     updateActivityCount();
 }
 
-function showStartSprintModal(activitiesCount, sprintName = '') {
-    console.log('showStartSprintModal called with:', { activitiesCount, sprintName });
+// Variable global para almacenar el ID del sprint que se está iniciando
+let currentSprintToStart = null;
+
+function showStartSprintModal(activitiesCount, sprintName = '', sprintId = null) {
+    console.log('showStartSprintModal called with:', { activitiesCount, sprintName, sprintId });
+    
+    // Guardar el ID del sprint si se proporciona (para sprints existentes)
+    currentSprintToStart = sprintId;
     
     const modal = document.getElementById('start-sprint-modal');
     const countElement = document.getElementById('sprint-activities-count');
+    const submitBtn = document.getElementById('start-sprint-submit-btn');
     
     if (modal && countElement) {
         countElement.textContent = `${activitiesCount} actividades se incluirán en este sprint.`;
         modal.classList.add('active');
+        
+        // Cambiar texto del botón según si es sprint nuevo o existente
+        if (submitBtn) {
+            submitBtn.textContent = sprintId ? 'Iniciar sprint' : 'Crear sprint';
+        }
         
         // Set default start date to today
         const startDateInput = document.getElementById('sprint-start-date');
@@ -2501,28 +2763,54 @@ function showStartSprintModal(activitiesCount, sprintName = '') {
         // Set sprint name if provided (do this last to avoid being overwritten)
         if (sprintName) {
             console.log('Setting sprint name to:', sprintName);
-            const sprintNameInput = document.getElementById('sprint-name');
-            if (sprintNameInput) {
-                console.log('Found sprint name input:', sprintNameInput);
-                
-                // Set value with longer delay to ensure DOM is ready
-                setTimeout(() => {
+            
+            // Delay to ensure modal is fully rendered
+            setTimeout(() => {
+                const sprintNameInput = document.getElementById('sprint-name');
+                if (sprintNameInput) {
+                    console.log('Found sprint name input, current value:', sprintNameInput.value);
+                    
+                    // Set value
                     sprintNameInput.value = sprintName;
-                    sprintNameInput.focus();
-                    sprintNameInput.select();
                     
-                    // Double-check and force the value
-                    if (sprintNameInput.value !== sprintName) {
-                        sprintNameInput.value = sprintName;
-                    }
+                    // Force white color with !important via style attribute
+                    sprintNameInput.setAttribute('style', 'color: #ffffff !important; background-color: transparent;');
                     
-                    console.log('Final value check:', sprintNameInput.value);
-                }, 200);
-            } else {
-                console.log('Sprint name input not found!');
-            }
+                    console.log('After setting - value:', sprintNameInput.value, 'style:', sprintNameInput.getAttribute('style'));
+                } else {
+                    console.log('Sprint name input not found!');
+                }
+            }, 200);
         }
     }
+}
+
+// Función para abrir modal de sprint (obtiene conteo y nombre dinámicamente desde el DOM)
+function showStartSprintModalForSprint(sprintId) {
+    const sprintSection = document.getElementById(sprintId);
+    if (!sprintSection) {
+        console.error('Sprint section not found:', sprintId);
+        return;
+    }
+    
+    // Obtener el nombre del sprint desde el título
+    const titleSpan = sprintSection.querySelector('.backlog-section-title');
+    const sprintName = titleSpan ? titleSpan.textContent.replace(/\s*\(\d+ actividades?\)/, '').trim() : sprintId;
+    
+    // Obtener el ID real del sprint desde dataset
+    const actualSprintId = sprintSection.dataset.sprintId;
+    
+    // Contar actividades dinámicamente desde el DOM
+    // Sprint 1 usa 'sprint-content' sin sufijo, los demás usan 'sprint-content-{sprintId}'
+    const contentId = sprintId === 'sprint-1' ? 'sprint-content' : `sprint-content-${sprintId}`;
+    const sprintContent = document.getElementById(contentId);
+    const storyCards = sprintContent ? sprintContent.querySelectorAll('.backlog-story-card') : [];
+    const activityCount = storyCards.length;
+    
+    console.log('Opening sprint modal for:', { sprintId, sprintName, actualSprintId, activityCount, contentId });
+    
+    // Llamar al modal con los valores correctos
+    showStartSprintModal(activityCount, sprintName, actualSprintId);
 }
 
 function calculateEndDate() {
@@ -2553,7 +2841,39 @@ async function submitStartSprint() {
     }
     
     try {
-        // 1. Crear sprint en backend
+        // CASO 1: Sprint existente (cuando currentSprintToStart tiene valor)
+        if (currentSprintToStart) {
+            console.log('Iniciando sprint existente:', currentSprintToStart);
+            
+            // 1. Actualizar sprint existente con status "Active"
+            await apiRequest(`/api/sprints/${currentSprintToStart}`, {
+                method: 'PUT',
+                body: {
+                    projectId: selectedProjectId,
+                    name,
+                    goal,
+                    startDate,
+                    endDate,
+                    durationWeeks: parseInt(duration),
+                    status: 'Active'
+                }
+            });
+            
+            showToast(`Sprint "${name}" iniciado exitosamente`, 'success');
+            hideModal('start-sprint-modal');
+            
+            // 2. Limpiar variable global
+            currentSprintToStart = null;
+            
+            // 3. Redirigir al tablero para ver las historias
+            switchProjectTab('board');
+            return;
+        }
+        
+        // CASO 2: Crear nuevo sprint (cuando currentSprintToStart es null)
+        console.log('Creando nuevo sprint');
+        
+        // 1. Crear sprint en backend con status "Active"
         const sprint = await apiRequest('/api/sprints', {
             method: 'POST',
             body: {
@@ -2562,12 +2882,14 @@ async function submitStartSprint() {
                 goal,
                 startDate,
                 endDate,
-                durationWeeks: parseInt(duration)
+                durationWeeks: parseInt(duration),
+                status: 'Active'
             }
         });
 
         // 2. Mover historias al sprint (usando seleccionadas o todas las del backlog)
         const storiesToMove = window.selectedStoriesForSprint || [];
+        let movedStoryCount = 0;
         
         if (storiesToMove.length > 0) {
             // Mover historias seleccionadas
@@ -2576,6 +2898,7 @@ async function submitStartSprint() {
                     await apiRequest(`/api/stories/${storyId}/move-to-sprint?sprintId=${encodeURIComponent(sprint.id)}`, {
                         method: 'POST'
                     });
+                    movedStoryCount++;
                 } catch (moveError) {
                     console.error(`Error moviendo historia ${storyId}:`, moveError);
                 }
@@ -2588,6 +2911,7 @@ async function submitStartSprint() {
                     await apiRequest(`/api/stories/${story.id}/move-to-sprint?sprintId=${encodeURIComponent(sprint.id)}`, {
                         method: 'POST'
                     });
+                    movedStoryCount++;
                 } catch (moveError) {
                     console.error(`Error moviendo historia ${story.id}:`, moveError);
                 }
@@ -2595,18 +2919,18 @@ async function submitStartSprint() {
         }
 
         // 3. Crear sección HTML dinámica del sprint
-        createDynamicSprintSection(sprint, storiesToMove.length);
+        createDynamicSprintSection(sprint, movedStoryCount);
 
-        showToast(`Sprint "${name}" creado con ${storiesToMove.length || 'todas las'} historias`, 'success');
+        showToast(`Sprint "${name}" creado y iniciado`, 'success');
         hideModal('start-sprint-modal');
         
         // 4. Limpiar selección
         window.selectedStoriesForSprint = null;
         
-        // 5. Recargar backlog para reflejar cambios
-        await loadBacklog();
+        // 5. Redirigir al tablero para ver las historias
+        switchProjectTab('board');
     } catch (error) {
-        console.error('Error creating sprint:', error);
+        console.error('Error al iniciar/crear sprint:', error);
         showToast('Error al iniciar sprint: ' + error.message, 'error');
     }
 }
@@ -2651,7 +2975,7 @@ function createDynamicSprintSection(sprint, storyCount) {
                     <div class="backlog-badge inprogress" title="En curso">0</div>
                     <div class="backlog-badge done" title="Hecho">0</div>
                 </div>
-                <button type="button" class="create-sprint-btn" onclick="showStartSprintModal(${storyCount}, '${sprint.name}')" disabled>Iniciar sprint</button>
+                <button type="button" class="create-sprint-btn" onclick="showStartSprintModalForSprint('${sprintId}')" disabled>Iniciar sprint</button>
                 <div class="sprint-menu-container">
                     <button type="button" class="sprint-menu-btn" onclick="toggleSprintOptionsMenu(event, '${sprintId}')" title="Más opciones">
                         <svg fill="none" viewBox="0 0 16 16" role="presentation">
@@ -2675,7 +2999,7 @@ function createDynamicSprintSection(sprint, storyCount) {
                 </div>
             </div>
         </div>
-        <div class="sprint-content" id="sprint-content-${sprintId}">
+        <div class="sprint-content" id="sprint-content-${sprintId}" ondragover="allowBacklogDrop(event)" ondrop="dropStoryOnSprint(event, '${sprintId}')">
             <!-- Historias se cargarán aquí -->
         </div>
         <div class="backlog-nudge-container" id="create-story-container-${sprintId}">
@@ -2802,7 +3126,7 @@ function updateStartSprintButtonState() {
     }
 }
 
-function createStory() {
+async function createStory() {
     const titleInput = document.getElementById('new-story-title');
     const title = titleInput.value.trim();
     
@@ -2811,62 +3135,67 @@ function createStory() {
         return;
     }
     
-    // Create new story object
-    const newStory = {
-        id: 'story-' + Date.now(),
-        title: title,
-        key: 'PROYEC-' + Math.floor(Math.random() * 1000),
-        status: 'Backlog',
-        priority: 2,
-        storyPoints: null,
-        assigneeId: null,
-        description: '',
-        createdAt: new Date().toISOString()
-    };
-    
-    // Add story to the sprint content
-    const sprintContent = document.getElementById('sprint-content');
-    const createContainer = document.getElementById('create-story-container');
-    
-    // Get project key
-    const project = projects.find(p => p.id === selectedProjectId);
-    let projectKey;
-    if (project) {
-        if (project.key) {
-            projectKey = project.key;
-        } else {
-            const nameParts = project.name.split(' ');
-            if (nameParts.length > 1) {
-                projectKey = nameParts.map(p => p[0]).join('').toUpperCase().substring(0, 4);
+    try {
+        // 1. Crear la historia en el backend (Sprint 1 no tiene sprintId real, va al backlog)
+        const story = await apiRequest('/api/stories', {
+            method: 'POST',
+            body: JSON.stringify({
+                projectId: selectedProjectId,
+                sprintId: null, // Sprint 1 es conceptual, las historias van al backlog
+                title,
+                description: '',
+                acceptanceCriteria: '',
+                storyPoints: 0,
+                priority: 2,
+                status: 'Backlog'
+            })
+        });
+
+        // 2. Agregar la historia dinámicamente al Sprint 1 (visualmente)
+        const sprintContent = document.getElementById('sprint-content');
+        if (sprintContent) {
+            const project = projects.find(p => p.id === selectedProjectId);
+            const projectKey = project ? (project.key || project.name.substring(0, 4).toUpperCase()) : 'PROJ';
+            
+            // Crear tarjeta de historia
+            const storyCard = createBacklogStoryCard(story, project?.members || [], projectKey);
+            
+            // Agregar al contenido del sprint
+            if (sprintContent.innerHTML.trim() === '<!-- Stories will be rendered here -->' || 
+                sprintContent.innerHTML.trim() === '') {
+                sprintContent.innerHTML = storyCard;
             } else {
-                projectKey = project.name.substring(0, 4).toUpperCase();
+                sprintContent.innerHTML += storyCard;
+            }
+            
+            // Actualizar contador de actividades en el título del Sprint 1
+            const activityCount = sprintContent.querySelectorAll('.backlog-story-card').length;
+            const sprintSection = document.getElementById('sprint-1')?.closest('.sprint-section');
+            const countSpan = sprintSection?.querySelector('.activity-count');
+            if (countSpan) {
+                countSpan.textContent = `(${activityCount} actividades)`;
+            }
+            
+            // Actualizar badge de pendientes
+            const todoBadge = sprintSection?.querySelector('.backlog-badge.todo');
+            if (todoBadge) {
+                todoBadge.textContent = activityCount;
+            }
+            
+            // Habilitar botón "Iniciar sprint"
+            const startSprintBtn = sprintSection?.querySelector('.create-sprint-btn');
+            if (startSprintBtn) {
+                startSprintBtn.disabled = false;
             }
         }
-    } else {
-        projectKey = 'PROJ';
+
+        showToast('Historia creada: ' + title, 'success');
+        hideCreateStoryForm();
+        
+    } catch (error) {
+        console.error('Error creating story:', error);
+        showToast('Error al crear historia: ' + error.message, 'error');
     }
-    
-    if (sprintContent && createContainer) {
-        const storyCardHTML = createBacklogStoryCard(newStory, [], projectKey);
-        if (storyCardHTML) {
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = storyCardHTML;
-            const storyCard = tempDiv.firstElementChild;
-            
-            // Move create container after the new story
-            sprintContent.appendChild(storyCard);
-            sprintContent.appendChild(createContainer);
-        }
-    }
-    
-    // Update the start sprint button state
-    updateStartSprintButtonState();
-    
-    showToast('Historia creada: ' + title, 'success');
-    hideCreateStoryForm();
-    
-    // Update activity count
-    updateActivityCount();
 }
 
 function updateActivityCount() {
@@ -3080,6 +3409,7 @@ async function deleteStory(id) {
 
 // ==================== KANBAN BOARD ====================
 let boardMembers = [];
+let currentIssueDetail = null;
 
 async function loadBoard() {
     if (!projects.length) await loadProjects();
@@ -3115,6 +3445,10 @@ function setupBoardListener() {
 }
 
 function renderKanban(stories, members) {
+    console.log('=== renderKanban ===');
+    console.log('Stories to render:', stories?.length || 0);
+    console.log('Stories:', stories);
+    
     // Clear all columns
     ['backlog', 'in-progress', 'done'].forEach(col => {
         const container = document.getElementById(`column-${col}`);
@@ -3124,23 +3458,37 @@ function renderKanban(stories, members) {
     // Count stories per column
     const counts = { Backlog: 0, InProgress: 0, Done: 0 };
     
-    stories.forEach(story => {
+    stories.forEach((story, index) => {
         // Map old statuses to new ones
         let status = story.status;
         if (status === 'SprintBacklog') status = 'Backlog';
         
+        console.log(`Story ${index}:`, story.id, 'status:', status, 'title:', story.title?.substring(0, 20));
+        
         counts[status] = (counts[status] || 0) + 1;
-        const card = createKanbanCard(story, members);
         
         let columnId;
         switch (status) {
             case 'Backlog': columnId = 'column-backlog'; break;
             case 'InProgress': columnId = 'column-in-progress'; break;
             case 'Done': columnId = 'column-done'; break;
+            default: 
+                console.log('Unknown status:', status, '- defaulting to backlog');
+                columnId = 'column-backlog';
         }
         
         const container = document.getElementById(columnId);
-        if (container) container.appendChild(card);
+        if (container) {
+            try {
+                const card = createKanbanCard(story, members);
+                container.appendChild(card);
+                console.log('Card added to', columnId);
+            } catch (cardError) {
+                console.error('Error creating card for story', story.id, cardError);
+            }
+        } else {
+            console.error('Container not found:', columnId);
+        }
     });
     
     // Update counts (check if elements exist)
@@ -3158,6 +3506,9 @@ function createKanbanCard(story, members) {
     card.className = 'kanban-card';
     card.draggable = true;
     card.dataset.storyId = story.id;
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `Abrir ${story.title}`);
     
     // Generate avatar HTML for assignee
     const assignee = members.find(m => m.id === story.assigneeId);
@@ -3175,10 +3526,13 @@ function createKanbanCard(story, members) {
     
     const extraMembers = members.length > 3 ? `<div class="member-avatar more" style="margin-left: -8px;">+${members.length - 3}</div>` : '';
     
+    // Default priority to 2 (medium) if not set
+    const priority = story.priority || 2;
+    
     card.innerHTML = `
         <div class="kanban-card-header">
             <span class="kanban-card-id">#${story.id.substring(0, 8)}</span>
-            <div class="kanban-card-priority priority-${story.priority}"></div>
+            <div class="kanban-card-priority priority-${priority}"></div>
         </div>
         <div class="kanban-card-title">${escapeHtml(story.title)}</div>
         <div class="kanban-card-members">
@@ -3213,8 +3567,249 @@ function createKanbanCard(story, members) {
             col.classList.remove('drag-over');
         });
     });
+
+    card.addEventListener('click', (e) => {
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        openIssueDetail(story.id);
+    });
+
+    card.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        openIssueDetail(story.id);
+    });
     
     return card;
+}
+
+async function openIssueDetail(storyId) {
+    const loading = document.getElementById('issue-detail-loading');
+    const body = document.getElementById('issue-detail-body');
+    if (loading) loading.style.display = 'block';
+    if (body) body.style.display = 'none';
+    showModal('issue-detail-modal');
+
+    try {
+        const story = await apiRequest(`/api/stories/${storyId}`);
+        currentIssueDetail = story;
+        renderIssueDetail(story);
+    } catch (error) {
+        hideModal('issue-detail-modal');
+        showToast('Error al cargar la actividad', 'error');
+    }
+}
+
+function renderIssueDetail(story) {
+    const loading = document.getElementById('issue-detail-loading');
+    const body = document.getElementById('issue-detail-body');
+    const project = projects.find(p => p.id === story.projectId);
+    const issueKey = story.key || `${project?.key || 'PROY'}-${story.id.substring(0, 4).toUpperCase()}`;
+    const createdBy = boardMembers.find(m => m.id === story.createdById) || (currentUser?.id === story.createdById ? currentUser : null);
+
+    document.getElementById('issue-detail-key').textContent = issueKey;
+    document.getElementById('issue-detail-title').value = story.title || '';
+    document.getElementById('issue-detail-description').value = story.description || '';
+    document.getElementById('issue-detail-status').value = story.status === 'SprintBacklog' ? 'Backlog' : story.status;
+    document.getElementById('issue-detail-priority').value = story.priority ?? 2;
+    document.getElementById('issue-detail-points').value = story.storyPoints ?? 0;
+    document.getElementById('issue-detail-sprint').textContent = story.sprintId ? `Sprint ${story.sprintId.substring(0, 8)}` : 'Ninguno';
+    document.getElementById('issue-detail-reporter').textContent = createdBy?.name || currentUser?.name || 'Ninguno';
+    document.getElementById('issue-current-user-avatar').textContent = getInitials(currentUser?.name || 'Usuario');
+    document.getElementById('issue-history-avatar').textContent = getInitials(currentUser?.name || 'Usuario');
+    document.getElementById('issue-history-user').textContent = currentUser?.name || 'Usuario';
+    document.getElementById('issue-detail-created').textContent = `Creado: ${formatIssueDate(story.createdAt)}`;
+    document.getElementById('issue-detail-updated').textContent = `Actualizado: ${formatIssueDate(story.updatedAt || story.createdAt)}`;
+
+    renderIssueAssigneeSelect(story);
+    renderIssueSubtasks(story.tasks || []);
+
+    if (loading) loading.style.display = 'none';
+    if (body) body.style.display = 'grid';
+}
+
+function renderIssueAssigneeSelect(story) {
+    const assigneeSelect = document.getElementById('issue-detail-assignee');
+    if (!assigneeSelect) return;
+
+    assigneeSelect.innerHTML = '<option value="">Sin asignar</option>' +
+        boardMembers.map(member => `<option value="${member.id}">${escapeHtml(member.name)}</option>`).join('');
+    assigneeSelect.value = story.assigneeId || '';
+}
+
+function renderIssueSubtasks(tasks) {
+    const list = document.getElementById('issue-subtasks-list');
+    const progressBar = document.getElementById('issue-subtask-progress-bar');
+    const progressText = document.getElementById('issue-subtask-progress-text');
+    const completed = tasks.filter(task => task.status === 'Done').length;
+    const percent = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
+
+    if (progressBar) progressBar.style.width = `${percent}%`;
+    if (progressText) progressText.textContent = `${percent} % completado`;
+    if (!list) return;
+
+    if (!tasks.length) {
+        list.innerHTML = '';
+        return;
+    }
+
+    list.innerHTML = `
+        <div class="issue-subtask-table">
+            <div class="issue-subtask-head">
+                <span>Actividad</span>
+                <span>Prioridad</span>
+                <span>Persona asignada</span>
+                <span>Estado</span>
+            </div>
+            ${tasks.map(task => {
+                const taskKey = `PROYEC-${task.id.substring(0, 2).toUpperCase()}`;
+                return `
+                    <div class="issue-subtask-row" data-task-id="${task.id}">
+                        <div class="issue-subtask-title">
+                            <i class="far fa-check-square"></i>
+                            <a href="#" onclick="event.preventDefault()">${taskKey}</a>
+                            <span>${escapeHtml(task.title)}</span>
+                        </div>
+                        <div class="issue-priority-inline">
+                            <span class="issue-priority-mark"></span>
+                            <span>Medium</span>
+                        </div>
+                        <div class="issue-assignee-inline">
+                            <span class="issue-mini-avatar">?</span>
+                            <span>${escapeHtml(task.assignedToName || 'Sin asignar')}</span>
+                        </div>
+                        <select onchange="updateIssueSubtaskStatus('${task.id}', this.value)">
+                            <option value="Todo" ${task.status === 'Todo' ? 'selected' : ''}>TAREAS POR HACER</option>
+                            <option value="InProgress" ${task.status === 'InProgress' ? 'selected' : ''}>EN CURSO</option>
+                            <option value="Done" ${task.status === 'Done' ? 'selected' : ''}>HECHO</option>
+                            <option value="Blocked" ${task.status === 'Blocked' ? 'selected' : ''}>BLOQUEADO</option>
+                        </select>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+async function saveIssueDetail() {
+    if (!currentIssueDetail) return;
+
+    const data = {
+        projectId: currentIssueDetail.projectId,
+        sprintId: currentIssueDetail.sprintId,
+        title: document.getElementById('issue-detail-title').value.trim(),
+        description: document.getElementById('issue-detail-description').value.trim(),
+        acceptanceCriteria: currentIssueDetail.acceptanceCriteria || '',
+        storyPoints: parseInt(document.getElementById('issue-detail-points').value) || 0,
+        priority: parseInt(document.getElementById('issue-detail-priority').value),
+        assigneeId: document.getElementById('issue-detail-assignee').value || null,
+        status: document.getElementById('issue-detail-status').value
+    };
+
+    if (!data.title) {
+        showToast('El titulo es obligatorio', 'error');
+        return;
+    }
+
+    try {
+        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+        currentIssueDetail = story;
+        renderIssueDetail(story);
+        refreshCurrentBoardView();
+        showToast('Actividad actualizada');
+    } catch (error) {
+        showToast('Error al guardar actividad', 'error');
+    }
+}
+
+async function updateIssueStatusFromDetail() {
+    if (!currentIssueDetail) return;
+    const status = document.getElementById('issue-detail-status').value;
+
+    try {
+        await apiRequest(`/api/stories/${currentIssueDetail.id}/status`, {
+            method: 'PUT',
+            body: JSON.stringify({ status })
+        });
+        currentIssueDetail.status = status;
+        refreshCurrentBoardView();
+        showToast(`Movido a ${getStatusText(status)}`);
+    } catch (error) {
+        showToast('Error al mover actividad', 'error');
+    }
+}
+
+async function createIssueSubtask() {
+    if (!currentIssueDetail) return;
+    const input = document.getElementById('issue-new-subtask-title');
+    const title = input?.value.trim();
+    if (!title) return;
+
+    try {
+        await apiRequest('/api/tasks/', {
+            method: 'POST',
+            body: JSON.stringify({
+                storyId: currentIssueDetail.id,
+                title,
+                description: '',
+                estimatedHours: null
+            })
+        });
+        input.value = '';
+        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
+        currentIssueDetail = story;
+        renderIssueDetail(story);
+        showToast('Subtarea creada');
+    } catch (error) {
+        showToast('Error al crear subtarea', 'error');
+    }
+}
+
+async function updateIssueSubtaskStatus(taskId, status) {
+    try {
+        await apiRequest(`/api/tasks/${taskId}/status`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status, actualHours: 0 })
+        });
+        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
+        currentIssueDetail = story;
+        renderIssueDetail(story);
+        showToast('Subtarea actualizada');
+    } catch (error) {
+        showToast('Error al actualizar subtarea', 'error');
+    }
+}
+
+function editIssueInClassicModal() {
+    if (!currentIssueDetail) return;
+    hideModal('issue-detail-modal');
+    editStory(currentIssueDetail.id);
+}
+
+function refreshCurrentBoardView() {
+    if (document.getElementById('project-content') && projectSubTab === 'board') {
+        loadProjectBoard();
+        return;
+    }
+
+    if (document.getElementById('board-project-select')) {
+        loadBoard();
+    }
+}
+
+function getInitials(name) {
+    return name.split(' ').map(part => part[0]).join('').toUpperCase().substring(0, 2) || 'U';
+}
+
+function formatIssueDate(value) {
+    if (!value) return '-';
+    return new Date(value).toLocaleDateString('es-PE', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+    });
 }
 
 function allowDrop(ev) {

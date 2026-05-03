@@ -97,7 +97,7 @@ public static class SprintRoutes
                     StartDate = request.StartDate,
                     EndDate = request.EndDate,
                     DurationWeeks = Math.Max(1, (int)Math.Ceiling((request.EndDate.Date - request.StartDate.Date).TotalDays / 7d)),
-                    Status = "Planning",
+                    Status = string.IsNullOrWhiteSpace(request.Status) ? "Planning" : request.Status,
                     CreatedAt = DateTime.UtcNow
                 };
 

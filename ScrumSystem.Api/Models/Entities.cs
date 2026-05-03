@@ -129,6 +129,7 @@ public class BoardStoryDto
 {
     public string Id { get; set; } = string.Empty;
     public string ProjectId { get; set; } = string.Empty;
+    public string? SprintId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
     public int? StoryPoints { get; set; }
@@ -288,6 +289,7 @@ public class CreateSprintRequest
     public string? Goal { get; set; }
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }
+    public string? Status { get; set; }
 }
 
 public class CreateStoryRequest
