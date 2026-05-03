@@ -3964,7 +3964,7 @@ function renderIssueSubtasks(tasks) {
                                 ${boardMembers.map(member => `
                                     <button type="button" class="issue-assignee-option" data-member-name="${escapeHtml(member.name)}" onclick="selectIssueSubtaskAssigneeFromPicker('${task.id}', '${member.id}', this)">
                                         <span class="issue-assignee-option-main">
-                                            <span class="issue-assignee-option-avatar">${escapeHtml(getInitials(member.name || 'U'))}</span>
+                                            <span class="issue-assignee-option-avatar assigned">${escapeHtml(getInitials(member.name || 'U'))}</span>
                                             <span>${escapeHtml(member.name)}</span>
                                         </span>
                                         <span class="issue-assignee-option-email">${escapeHtml(member.email || '')}</span>
