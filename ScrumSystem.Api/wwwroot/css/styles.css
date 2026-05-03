@@ -4313,6 +4313,33 @@ padding: 0;
     color: var(--text-muted);
 }
 
+/* Aviso cuando el tablero no tiene sprint activo (historias solo tras Iniciar sprint) */
+.board-sprint-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin: 0 0 16px;
+    padding: 14px 18px;
+    border-radius: 12px;
+    border: 1px solid var(--purple-alpha-30);
+    background: linear-gradient(135deg, var(--purple-alpha-15) 0%, var(--bg-card) 100%);
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.board-sprint-hint i {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--primary-purple-light);
+    font-size: 18px;
+}
+
+.board-sprint-hint strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
 /* Kanban Board */
 .kanban-board {
     display: grid;
@@ -5016,6 +5043,15 @@ padding: 0;
     padding: 10px 12px;
 }
 
+.issue-subtask-create select {
+    min-width: 180px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    padding: 10px 12px;
+}
+
 .issue-empty {
     color: var(--text-muted);
     border: 1px dashed var(--border-color);
@@ -5272,8 +5308,8 @@ padding: 0;
 .issue-subtask-head,
 .issue-subtask-row {
     display: grid;
-    grid-template-columns: minmax(180px, 1.35fr) 172px 128px 360px;
-    min-width: 760px;
+    grid-template-columns: minmax(180px, 1.25fr) 140px 170px 240px 96px;
+    min-width: 860px;
 }
 
 .issue-subtask-head {
@@ -5291,6 +5327,7 @@ padding: 0;
 }
 
 .issue-subtask-head span:last-child,
+.issue-subtask-row > div:last-child,
 .issue-subtask-row > select:last-child {
     border-right: 0;
 }
@@ -5304,6 +5341,22 @@ padding: 0;
 .issue-subtask-title a {
     color: #0052cc;
     text-decoration: none;
+}
+
+.issue-subtask-title input {
+    width: 100%;
+    border: 1px solid transparent;
+    background: transparent;
+    color: inherit;
+    font-size: 13px;
+    border-radius: 6px;
+    padding: 6px 8px;
+}
+
+.issue-subtask-title input:focus {
+    outline: none;
+    border-color: var(--primary-purple);
+    background: rgba(167, 139, 250, 0.08);
 }
 
 .issue-priority-inline,
@@ -5342,6 +5395,500 @@ padding: 0;
     font-weight: 700;
     align-self: stretch;
     border-radius: 0;
+}
+
+.issue-subtask-actions {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.issue-assignee-picker {
+    position: relative;
+    min-width: 0;
+}
+
+.issue-assignee-trigger {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: transparent;
+    border: 1px solid rgba(196, 181, 253, 0.22);
+    border-radius: 8px;
+    color: var(--text-primary);
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.issue-assignee-trigger span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.issue-assignee-menu {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 6px);
+    background: rgba(29, 23, 56, 0.98);
+    border: 1px solid rgba(196, 181, 253, 0.26);
+    border-radius: 10px;
+    box-shadow: 0 14px 28px rgba(8, 8, 20, 0.46);
+    padding: 8px;
+    z-index: 25;
+    display: none;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.issue-assignee-menu.open {
+    display: block;
+}
+
+.issue-assignee-menu input {
+    width: 100%;
+    margin-bottom: 8px;
+    background: rgba(44, 34, 82, 0.7);
+    border: 1px solid rgba(196, 181, 253, 0.22);
+    border-radius: 8px;
+    color: var(--text-primary);
+    padding: 8px 10px;
+}
+
+.issue-assignee-option {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    color: var(--text-secondary);
+    border-radius: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.issue-assignee-option:hover {
+    background: rgba(167, 139, 250, 0.16);
+    color: var(--text-primary);
+}
+
+.issue-assignee-option-main {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.issue-assignee-option-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+    flex-shrink: 0;
+}
+
+.issue-assignee-option-avatar.unassigned {
+    background: rgba(148, 163, 184, 0.55);
+}
+
+.issue-assignee-option-role {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* === Scrum Issue Detail Modern Polish === */
+.issue-detail-content {
+    border-radius: 20px;
+    box-shadow: 0 24px 52px rgba(7, 7, 18, 0.5);
+}
+
+.issue-detail-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 12;
+    padding: 10px 12px;
+    margin: -6px -6px 22px;
+    border-radius: 14px;
+    background: rgba(24, 18, 46, 0.82);
+    border: 1px solid rgba(196, 181, 253, 0.2);
+    backdrop-filter: blur(8px);
+}
+
+.issue-detail-key {
+    background: rgba(124, 58, 237, 0.16);
+    color: #ddd6fe;
+    border: 1px solid rgba(196, 181, 253, 0.25);
+    border-radius: 999px;
+    padding: 6px 12px;
+}
+
+.issue-title-input {
+    letter-spacing: -0.02em;
+}
+
+.issue-section {
+    background: rgba(27, 21, 53, 0.5);
+    border: 1px solid rgba(196, 181, 253, 0.14);
+    border-radius: 14px;
+    padding: 14px 16px;
+}
+
+.issue-subtask-table {
+    border: 1px solid rgba(196, 181, 253, 0.2);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.issue-subtask-head {
+    background: rgba(122, 93, 214, 0.2);
+    color: #ddd6fe;
+}
+
+.issue-subtask-row {
+    background: rgba(20, 16, 42, 0.76);
+    transition: background 0.18s ease;
+}
+
+.issue-subtask-row:hover {
+    background: rgba(37, 29, 70, 0.86);
+}
+
+.issue-subtask-row select,
+.issue-subtask-title input {
+    border-radius: 8px;
+}
+
+.issue-subtask-create {
+    border: 1px solid rgba(196, 181, 253, 0.3);
+    border-radius: 12px;
+    padding: 10px;
+    background: rgba(32, 25, 60, 0.72);
+}
+
+.issue-subtask-create .issue-subtask-type,
+.issue-subtask-create .issue-subtask-submit {
+    border-radius: 10px;
+    border: 1px solid rgba(196, 181, 253, 0.24);
+    background: rgba(91, 66, 170, 0.24);
+    color: #f5f3ff;
+}
+
+.issue-activity-tabs {
+    border-radius: 999px;
+    overflow: hidden;
+    border-color: rgba(196, 181, 253, 0.24);
+}
+
+.issue-activity-tabs button {
+    background: rgba(29, 23, 56, 0.65);
+    color: #d8d2f7;
+}
+
+.issue-activity-tabs button.active {
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 45%, #ec4899 100%);
+    color: #fff;
+}
+
+.issue-comment-input {
+    border-radius: 12px;
+    min-height: 92px;
+}
+
+.issue-history-row {
+    background: rgba(32, 25, 60, 0.62);
+    border: 1px solid rgba(196, 181, 253, 0.18);
+    border-radius: 12px;
+    padding: 10px 12px;
+}
+
+.issue-assignee-option-role {
+    background: rgba(124, 58, 237, 0.18);
+    border: 1px solid rgba(196, 181, 253, 0.24);
+    border-radius: 999px;
+    padding: 2px 8px;
+    color: #ede9fe;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* Right details panel refinement (Jira-like) */
+.issue-detail-side {
+    position: sticky;
+    top: 78px;
+    align-self: start;
+    background: rgba(24, 19, 49, 0.62);
+    border: 1px solid rgba(196, 181, 253, 0.16);
+    border-radius: 14px;
+    padding: 12px;
+}
+
+.issue-status-row {
+    margin-bottom: 14px;
+}
+
+#issue-detail-status {
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid rgba(196, 181, 253, 0.26);
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.24) 0%, rgba(91, 66, 170, 0.2) 100%);
+    color: #f5f3ff;
+    font-weight: 700;
+}
+
+.issue-panel {
+    margin-bottom: 12px;
+    border-radius: 12px;
+    background: rgba(31, 25, 60, 0.66);
+    border: 1px solid rgba(196, 181, 253, 0.16);
+    padding: 14px;
+}
+
+.issue-panel-title {
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(196, 181, 253, 0.14);
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #ddd6fe;
+}
+
+.issue-field {
+    grid-template-columns: 130px minmax(0, 1fr);
+    margin-bottom: 12px;
+}
+
+.issue-field span {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: #b8a9ec;
+}
+
+.issue-field strong {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    border: 1px solid rgba(196, 181, 253, 0.16);
+    border-radius: 8px;
+    background: rgba(44, 35, 81, 0.58);
+    padding: 7px 10px;
+}
+
+#issue-detail-assignee,
+#issue-detail-priority,
+#issue-detail-points {
+    min-height: 34px;
+    border-radius: 8px;
+    border: 1px solid rgba(196, 181, 253, 0.2);
+    background: rgba(44, 35, 81, 0.58);
+}
+
+.issue-detail-dates {
+    border: 1px solid rgba(196, 181, 253, 0.14);
+    border-radius: 10px;
+    background: rgba(33, 27, 63, 0.55);
+    padding: 10px 12px;
+    margin: 8px 0 14px;
+}
+
+.issue-save-btn {
+    border-radius: 10px;
+    min-height: 38px;
+    font-weight: 700;
+}
+
+/* Microinteractions and responsive polish for Scrum issue modal */
+.issue-detail-content,
+.issue-section,
+.issue-panel,
+.issue-subtask-row,
+.issue-history-row,
+.issue-assignee-trigger,
+.issue-assignee-option,
+.issue-save-btn,
+.issue-activity-tabs button,
+.issue-subtask-create .issue-subtask-type,
+.issue-subtask-create .issue-subtask-submit {
+    transition: all 0.18s ease;
+}
+
+.issue-section:hover,
+.issue-panel:hover {
+    border-color: rgba(196, 181, 253, 0.3);
+    box-shadow: 0 8px 24px rgba(7, 7, 18, 0.24);
+}
+
+.issue-history-row:hover {
+    transform: translateY(-1px);
+    border-color: rgba(196, 181, 253, 0.3);
+}
+
+.issue-assignee-trigger:hover {
+    border-color: rgba(196, 181, 253, 0.35);
+    background: rgba(52, 40, 96, 0.46);
+}
+
+.issue-assignee-trigger:focus-visible,
+.issue-assignee-menu input:focus-visible,
+.issue-subtask-title input:focus-visible,
+.issue-comment-input:focus-visible,
+#issue-detail-status:focus-visible,
+#issue-detail-assignee:focus-visible,
+#issue-detail-priority:focus-visible,
+#issue-detail-points:focus-visible {
+    outline: none;
+    border-color: #a78bfa;
+    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.2);
+}
+
+.issue-save-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 24px rgba(89, 50, 177, 0.32);
+}
+
+.issue-save-btn:active {
+    transform: translateY(0);
+}
+
+@media (max-width: 1100px) {
+    .issue-detail-content {
+        padding: 20px;
+    }
+
+    .issue-detail-layout {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+
+    .issue-detail-side {
+        position: static;
+        top: auto;
+    }
+}
+
+@media (max-width: 768px) {
+    .issue-detail-modal {
+        padding: 8px;
+    }
+
+    .issue-detail-content {
+        border-radius: 14px;
+        max-height: calc(100vh - 16px);
+        padding: 14px;
+    }
+
+    .issue-detail-toolbar {
+        margin: 0 0 14px;
+        padding: 8px;
+    }
+
+    .issue-title-input {
+        font-size: 22px;
+        margin-bottom: 14px;
+    }
+
+    .issue-section {
+        padding: 12px;
+    }
+
+    .issue-subtask-create {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+
+    .issue-subtask-create input,
+    .issue-subtask-create select,
+    .issue-subtask-create button {
+        width: 100%;
+    }
+
+    .issue-field {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+
+    .issue-assignee-menu {
+        max-height: 200px;
+    }
+}
+
+@media (max-width: 560px) {
+    .issue-activity-tabs {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .issue-activity-tabs button {
+        font-size: 12px;
+        padding: 8px 6px;
+    }
+
+    .issue-history-row {
+        padding: 8px 9px;
+    }
+}
+
+/* Compact mode by default for issue workspace */
+.issue-detail-content {
+    font-size: 14px;
+}
+
+.issue-detail-toolbar {
+    margin-bottom: 14px;
+    padding: 8px 10px;
+}
+
+.issue-title-input {
+    font-size: 24px;
+    margin-bottom: 14px;
+}
+
+.issue-section {
+    padding: 10px 12px;
+    margin-bottom: 16px;
+}
+
+.issue-section h4 {
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.issue-subtask-head span,
+.issue-subtask-row > div,
+.issue-subtask-row > select {
+    padding: 7px 8px;
+}
+
+.issue-subtask-row select {
+    font-size: 11px;
+}
+
+.issue-detail-side {
+    padding: 10px;
+}
+
+.issue-panel {
+    padding: 10px 12px;
+}
+
+.issue-field {
+    margin-bottom: 8px;
+    gap: 10px;
 }
 
 .issue-subtasks-list {
@@ -6219,4 +6766,274 @@ padding: 0;
     .kanban-board {
         grid-template-columns: 1fr;
     }
+}
+
+/* === Modern UI Polish Layer === */
+:root {
+    --surface-glass: rgba(34, 28, 66, 0.72);
+    --surface-soft: rgba(167, 139, 250, 0.08);
+    --surface-soft-hover: rgba(167, 139, 250, 0.15);
+    --border-soft: rgba(196, 181, 253, 0.28);
+    --shadow-soft: 0 10px 30px rgba(8, 8, 18, 0.28);
+    --shadow-strong: 0 18px 42px rgba(7, 7, 16, 0.42);
+}
+
+body {
+    background:
+        radial-gradient(circle at 15% 10%, rgba(124, 58, 237, 0.24), transparent 42%),
+        radial-gradient(circle at 85% 0%, rgba(6, 182, 212, 0.2), transparent 36%),
+        linear-gradient(165deg, #120f24 0%, #161233 42%, #1f1a47 100%);
+}
+
+.home-nav,
+.header,
+.dashboard-header,
+.project-header {
+    background: var(--surface-glass);
+    border-bottom: 1px solid var(--border-soft);
+    box-shadow: 0 8px 25px rgba(6, 6, 16, 0.3);
+}
+
+.feature-card,
+.testimonial-card,
+.pricing-card,
+.kanban-column,
+.task-card,
+.sprint-section,
+.backlog-section,
+.project-controls,
+.modal-content,
+.auth-card,
+.settings-card,
+.dashboard-card {
+    background: linear-gradient(180deg, rgba(58, 48, 100, 0.72) 0%, rgba(46, 38, 84, 0.7) 100%);
+    border: 1px solid var(--border-soft);
+    border-radius: 16px;
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(8px);
+}
+
+.feature-card:hover,
+.testimonial-card:hover,
+.pricing-card:hover,
+.kanban-column:hover,
+.task-card:hover,
+.dashboard-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-strong);
+    border-color: rgba(167, 139, 250, 0.5);
+}
+
+.hero-title,
+.section-title {
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+}
+
+.hero-subtitle,
+.section-subtitle,
+p {
+    color: #ddd6fe;
+}
+
+.btn,
+button,
+.btn-nav-primary,
+.btn-nav-secondary,
+.btn-hero-primary,
+.btn-hero-secondary,
+.btn-pricing,
+.btn-cta {
+    border-radius: 12px;
+    border: 1px solid transparent;
+    transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background 0.22s ease;
+}
+
+.btn-primary,
+.btn-nav-primary,
+.btn-hero-primary,
+.btn-pricing.primary,
+.btn-cta {
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 45%, #ec4899 100%);
+    box-shadow: 0 10px 24px rgba(124, 58, 237, 0.35);
+}
+
+.btn:hover,
+button:hover,
+.btn-nav-primary:hover,
+.btn-hero-primary:hover,
+.btn-pricing:hover,
+.btn-cta:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 30px rgba(17, 10, 38, 0.42);
+}
+
+.btn-secondary,
+.btn-nav-secondary,
+.btn-hero-secondary {
+    background: var(--surface-soft);
+    border-color: var(--border-soft);
+    color: #f3f0ff;
+}
+
+input,
+select,
+textarea,
+.search-input-wrapper input {
+    background: rgba(29, 23, 56, 0.72);
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    color: #f5f3ff;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+.search-input-wrapper input:focus {
+    border-color: #a78bfa;
+    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.2);
+    background: rgba(42, 34, 76, 0.9);
+}
+
+.table-container,
+table,
+.notification-menu,
+.dropdown-menu {
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    overflow: hidden;
+    background: rgba(32, 26, 60, 0.85);
+}
+
+th {
+    background: rgba(89, 67, 165, 0.32);
+    color: #f3e8ff;
+}
+
+td {
+    border-color: rgba(196, 181, 253, 0.15);
+}
+
+.kanban-column-header {
+    background: rgba(86, 64, 160, 0.28);
+    border-bottom: 1px solid rgba(196, 181, 253, 0.25);
+}
+
+.kanban-card {
+    background: rgba(22, 18, 44, 0.78);
+    border: 1px solid rgba(196, 181, 253, 0.2);
+    border-radius: 14px;
+}
+
+.kanban-card:hover {
+    border-color: #a78bfa;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(20, 17, 38, 0.8);
+    border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #7c3aed 0%, #a78bfa 100%);
+    border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #8b5cf6 0%, #c4b5fd 100%);
+}
+
+@media (max-width: 768px) {
+    .feature-card,
+    .testimonial-card,
+    .pricing-card,
+    .kanban-column,
+    .task-card,
+    .auth-card,
+    .dashboard-card {
+        border-radius: 14px;
+    }
+}
+
+/* Keep issue detail modal aligned with dark app theme */
+.issue-detail-modal {
+    background: rgba(10, 10, 22, 0.74);
+}
+
+.issue-detail-content {
+    background: linear-gradient(180deg, rgba(45, 36, 84, 0.94) 0%, rgba(34, 28, 66, 0.96) 100%);
+    border: 1px solid var(--border-soft);
+    border-radius: 16px;
+    color: var(--text-primary);
+}
+
+.issue-detail-key,
+.issue-detail-loading,
+.issue-section-meta,
+.issue-detail-dates,
+.issue-field span {
+    color: #c4b5fd;
+}
+
+.issue-detail-main,
+.issue-detail-side,
+.issue-section h4,
+.issue-title-input,
+.issue-field strong,
+.issue-panel-title {
+    color: #f5f3ff;
+}
+
+.issue-detail-actions .btn,
+.issue-add-top,
+.issue-subtask-tools button,
+.issue-subtask-type,
+.issue-subtask-submit {
+    background: rgba(91, 66, 170, 0.2);
+    border: 1px solid rgba(196, 181, 253, 0.28);
+    color: #ede9fe;
+    border-radius: 10px;
+}
+
+.issue-description-input,
+.issue-subtask-create input,
+.issue-detail-side select,
+.issue-detail-side input,
+.issue-comment-input,
+.issue-subtask,
+.issue-panel {
+    background: rgba(29, 23, 56, 0.72);
+    border-color: rgba(196, 181, 253, 0.22);
+    color: #f5f3ff;
+    border-radius: 10px;
+}
+
+.issue-save-btn {
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 45%, #ec4899 100%);
+    border-color: transparent;
+}
+
+.issue-comment-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 10px;
+}
+
+.issue-activity-list {
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.issue-activity-kind {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-left: 6px;
 }

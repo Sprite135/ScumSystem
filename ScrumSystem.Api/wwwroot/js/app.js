@@ -54,7 +54,7 @@ function showMainApp() {
     if (currentUser) {
         if (userName) userName.textContent = currentUser.name;
         if (userRole) {
-            const roleMap = { 0: 'Admin', 1: 'Product Owner', 2: 'Scrum Master', 3: 'Developer' };
+            const roleMap = { 0: 'Product Owner', 1: 'Scrum Master', 2: 'Developer' };
             const roleText = typeof currentUser.role === 'number' ? roleMap[currentUser.role] : currentUser.role;
             userRole.textContent = roleText || 'Usuario';
         }
@@ -537,9 +537,17 @@ async function loadProjectBoard() {
         console.log('Members count:', data.members?.length || 0);
         
         boardMembers = data.members || [];
-        
+
+        const noActiveSprint = data.hasActiveSprint === false;
+        const boardHint = noActiveSprint
+            ? `<div class="board-sprint-hint" role="status">
+                    <i class="fas fa-info-circle"></i>
+                    <span>No hay sprint activo. En el backlog, pulsa <strong>Iniciar sprint</strong> para que las historias aparezcan aquí.</span>
+                </div>`
+            : '';
+
         // Render kanban board HTML
-        content.innerHTML = `
+        content.innerHTML = `${boardHint}
             <div class="kanban-board" id="kanban-board">
                 <div class="kanban-column" data-status="Backlog" draggable="true">
                     <div class="kanban-column-header" onmousedown="startDragColumn(event, this)">
@@ -1184,7 +1192,7 @@ async function confirmAddMembers() {
             });
         }
         
-        showToast(`${membersToAdd.length} miembro(s) agregado(s)`);
+        showToast(`${membersToAdd.length} invitacion(es) enviada(s). El usuario debe aceptar en notificaciones.`);
         hideModal('add-members-modal');
         membersToAdd = [];
         loadProjects(); // Refresh to show new members
@@ -1398,10 +1406,7 @@ document.addEventListener('DOMContentLoaded', () => {
 let projectToDelete = null;
 
 function populateProjectSelects() {
-    const options = projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
-    document.querySelectorAll('#story-project').forEach(el => {
-        if (el) el.innerHTML = '<option value="">Seleccionar...</option>' + options;
-    });
+    // Reservado: antes se usaba #story-project como select (incorrecto). Los selects de proyecto viven en cada pantalla.
 }
 
 async function loadBacklog() {
@@ -3353,18 +3358,32 @@ async function handleCreateStory(e) {
     
     const id = document.getElementById('story-id').value;
     const isEdit = !!id;
-    const projectId = document.getElementById('backlog-project-select')?.value || projects[0]?.id;
-    
+    const projectFromHidden = document.getElementById('story-edit-project-id')?.value?.trim();
+    const projectId = isEdit && projectFromHidden
+        ? projectFromHidden
+        : (document.getElementById('backlog-project-select')?.value || selectedProjectId || projects[0]?.id);
+
+    const sprintRaw = document.getElementById('story-edit-sprint-id')?.value?.trim();
+    const statusRaw = document.getElementById('story-edit-status')?.value?.trim();
+    const assigneeRaw = document.getElementById('story-edit-assignee-id')?.value?.trim();
+
     const data = {
-        projectId: projectId,
-        sprintId: null,
+        projectId,
         title: document.getElementById('story-title').value,
         description: document.getElementById('story-description').value,
         acceptanceCriteria: document.getElementById('story-criteria').value,
         storyPoints: parseInt(document.getElementById('story-points').value) || 0,
-        priority: parseInt(document.getElementById('story-priority').value)
+        priority: parseInt(document.getElementById('story-priority').value) || 0
     };
-    
+
+    if (isEdit) {
+        data.sprintId = sprintRaw ? sprintRaw : null;
+        data.status = statusRaw || 'Backlog';
+        data.assigneeId = assigneeRaw || null;
+    } else {
+        data.sprintId = null;
+    }
+
     try {
         const url = isEdit ? `/api/stories/${id}` : '/api/stories';
         const method = isEdit ? 'PUT' : 'POST';
@@ -3373,7 +3392,12 @@ async function handleCreateStory(e) {
         hideModal('story-modal');
         e.target.reset();
         document.getElementById('story-id').value = '';
+        document.getElementById('story-edit-project-id').value = '';
+        document.getElementById('story-edit-sprint-id').value = '';
+        document.getElementById('story-edit-status').value = '';
+        document.getElementById('story-edit-assignee-id').value = '';
         loadBacklog();
+        refreshCurrentBoardView();
         showToast(isEdit ? 'Historia actualizada' : 'Historia creada');
     } catch (error) {
         showToast('Error: ' + error.message, 'error');
@@ -3384,6 +3408,10 @@ async function editStory(id) {
     try {
         const story = await apiRequest(`/api/stories/${id}`);
         document.getElementById('story-id').value = story.id;
+        document.getElementById('story-edit-project-id').value = story.projectId || '';
+        document.getElementById('story-edit-sprint-id').value = story.sprintId || '';
+        document.getElementById('story-edit-status').value = story.status || 'Backlog';
+        document.getElementById('story-edit-assignee-id').value = story.assigneeId || '';
         document.getElementById('story-title').value = story.title;
         document.getElementById('story-description').value = story.description || '';
         document.getElementById('story-criteria').value = story.acceptanceCriteria || '';
@@ -3410,6 +3438,7 @@ async function deleteStory(id) {
 // ==================== KANBAN BOARD ====================
 let boardMembers = [];
 let currentIssueDetail = null;
+let issueActivityFilter = 'Todo';
 
 async function loadBoard() {
     if (!projects.length) await loadProjects();
@@ -3432,6 +3461,22 @@ async function loadBoard() {
     try {
         const data = await apiRequest(`/api/stories/project/${projectId}/board`);
         boardMembers = data.members || [];
+        const pageBoard = document.getElementById('page-board');
+        let hintEl = document.getElementById('board-active-sprint-hint');
+        if (pageBoard && data.hasActiveSprint === false) {
+            if (!hintEl) {
+                hintEl = document.createElement('div');
+                hintEl.id = 'board-active-sprint-hint';
+                hintEl.className = 'board-sprint-hint';
+                hintEl.setAttribute('role', 'status');
+                const kb = pageBoard.querySelector('.kanban-board');
+                if (kb && kb.parentNode) kb.parentNode.insertBefore(hintEl, kb);
+            }
+            hintEl.innerHTML = '<i class="fas fa-info-circle"></i> <span>No hay sprint activo. Abre el proyecto, ve al backlog y pulsa <strong>Iniciar sprint</strong> para ver historias en el tablero.</span>';
+            hintEl.style.display = 'flex';
+        } else if (hintEl) {
+            hintEl.style.display = 'none';
+        }
         renderKanban(data.stories || [], data.members || []);
     } catch (error) {
         console.error('Error loading board:', error);
@@ -3557,7 +3602,10 @@ function createKanbanCard(story, members) {
     
     card.addEventListener('dragstart', (e) => {
         card.classList.add('dragging');
+        const col = card.closest('.kanban-column');
+        const sourceColumnStatus = col?.getAttribute('data-status') || '';
         e.dataTransfer.setData('storyId', story.id);
+        e.dataTransfer.setData('sourceColumnStatus', sourceColumnStatus);
         e.dataTransfer.effectAllowed = 'move';
     });
     
@@ -3591,6 +3639,17 @@ async function openIssueDetail(storyId) {
 
     try {
         const story = await apiRequest(`/api/stories/${storyId}`);
+        if (story.projectId) {
+            try {
+                const boardData = await apiRequest(`/api/stories/project/${story.projectId}/board`);
+                boardMembers = boardData.members || [];
+            } catch (e) {
+                console.warn('No se pudieron cargar miembros del proyecto para el detalle:', e);
+                boardMembers = [];
+            }
+        } else {
+            boardMembers = [];
+        }
         currentIssueDetail = story;
         renderIssueDetail(story);
     } catch (error) {
@@ -3615,16 +3674,92 @@ function renderIssueDetail(story) {
     document.getElementById('issue-detail-sprint').textContent = story.sprintId ? `Sprint ${story.sprintId.substring(0, 8)}` : 'Ninguno';
     document.getElementById('issue-detail-reporter').textContent = createdBy?.name || currentUser?.name || 'Ninguno';
     document.getElementById('issue-current-user-avatar').textContent = getInitials(currentUser?.name || 'Usuario');
-    document.getElementById('issue-history-avatar').textContent = getInitials(currentUser?.name || 'Usuario');
-    document.getElementById('issue-history-user').textContent = currentUser?.name || 'Usuario';
     document.getElementById('issue-detail-created').textContent = `Creado: ${formatIssueDate(story.createdAt)}`;
     document.getElementById('issue-detail-updated').textContent = `Actualizado: ${formatIssueDate(story.updatedAt || story.createdAt)}`;
 
     renderIssueAssigneeSelect(story);
+    renderIssueSubtaskAssigneeSelect();
     renderIssueSubtasks(story.tasks || []);
+    renderIssueActivity(story);
 
     if (loading) loading.style.display = 'none';
     if (body) body.style.display = 'grid';
+}
+
+function setIssueActivityFilter(filter, buttonEl) {
+    issueActivityFilter = filter;
+    const tabs = document.querySelectorAll('.issue-activity-tabs button');
+    tabs.forEach(btn => btn.classList.remove('active'));
+    if (buttonEl) buttonEl.classList.add('active');
+    if (currentIssueDetail) renderIssueActivity(currentIssueDetail);
+}
+
+function renderIssueActivity(story) {
+    const list = document.getElementById('issue-activity-list');
+    if (!list) return;
+
+    const comments = (story.comments || []).map(comment => ({
+        kind: 'Comentario',
+        userName: comment.userName || 'Usuario',
+        message: comment.message,
+        createdAt: comment.createdAt
+    }));
+    const history = (story.history || []).map(item => ({
+        kind: 'Historial',
+        userName: item.userName || 'Sistema',
+        message: item.message,
+        createdAt: item.createdAt
+    }));
+
+    let items = [...comments, ...history];
+    if (issueActivityFilter === 'Comentarios') items = comments;
+    if (issueActivityFilter === 'Historial') items = history;
+
+    items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    if (!items.length) {
+        list.innerHTML = `<div class="issue-empty">Sin actividad registrada.</div>`;
+        return;
+    }
+
+    list.innerHTML = items.map(item => `
+        <div class="issue-history-row">
+            <div class="issue-avatar">${getInitials(item.userName)}</div>
+            <div>
+                <div><strong>${escapeHtml(item.userName)}</strong> <span class="issue-activity-kind">${item.kind}</span></div>
+                <div>${escapeHtml(item.message || '')}</div>
+                <small>${formatIssueDateTime(item.createdAt)}</small>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function addIssueComment() {
+    if (!currentIssueDetail) return;
+    const input = document.getElementById('issue-new-comment');
+    const message = input?.value?.trim();
+
+    if (!message) {
+        showToast('Escribe un comentario', 'error');
+        return;
+    }
+
+    try {
+        await apiRequest(`/api/stories/${currentIssueDetail.id}/comments`, {
+            method: 'POST',
+            body: JSON.stringify({
+                userId: currentUser?.id || '',
+                message
+            })
+        });
+        if (input) input.value = '';
+        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
+        currentIssueDetail = story;
+        renderIssueDetail(story);
+        showToast('Comentario agregado');
+    } catch (error) {
+        showToast('Error al agregar comentario', 'error');
+    }
 }
 
 function renderIssueAssigneeSelect(story) {
@@ -3634,6 +3769,15 @@ function renderIssueAssigneeSelect(story) {
     assigneeSelect.innerHTML = '<option value="">Sin asignar</option>' +
         boardMembers.map(member => `<option value="${member.id}">${escapeHtml(member.name)}</option>`).join('');
     assigneeSelect.value = story.assigneeId || '';
+}
+
+function renderIssueSubtaskAssigneeSelect() {
+    const list = document.getElementById('issue-members-list');
+    if (!list) return;
+
+    list.innerHTML = boardMembers
+        .map(member => `<option value="${escapeHtml(member.name)}"></option>`)
+        .join('');
 }
 
 function renderIssueSubtasks(tasks) {
@@ -3659,6 +3803,7 @@ function renderIssueSubtasks(tasks) {
                 <span>Prioridad</span>
                 <span>Persona asignada</span>
                 <span>Estado</span>
+                <span>Acciones</span>
             </div>
             ${tasks.map(task => {
                 const taskKey = `PROYEC-${task.id.substring(0, 2).toUpperCase()}`;
@@ -3667,15 +3812,40 @@ function renderIssueSubtasks(tasks) {
                         <div class="issue-subtask-title">
                             <i class="far fa-check-square"></i>
                             <a href="#" onclick="event.preventDefault()">${taskKey}</a>
-                            <span>${escapeHtml(task.title)}</span>
+                            <input type="text" value="${escapeHtml(task.title)}" maxlength="255"
+                                onchange="updateIssueSubtaskDetails('${task.id}')"
+                                onblur="updateIssueSubtaskDetails('${task.id}')">
                         </div>
-                        <div class="issue-priority-inline">
-                            <span class="issue-priority-mark"></span>
-                            <span>Medium</span>
-                        </div>
-                        <div class="issue-assignee-inline">
-                            <span class="issue-mini-avatar">?</span>
-                            <span>${escapeHtml(task.assignedToName || 'Sin asignar')}</span>
+                        <select id="issue-subtask-priority-${task.id}" onchange="updateIssueSubtaskDetails('${task.id}')">
+                            <option value="0" ${Number(task.priority ?? 1) === 0 ? 'selected' : ''}>Baja</option>
+                            <option value="1" ${Number(task.priority ?? 1) === 1 ? 'selected' : ''}>Media</option>
+                            <option value="2" ${Number(task.priority ?? 1) === 2 ? 'selected' : ''}>Alta</option>
+                            <option value="3" ${Number(task.priority ?? 1) === 3 ? 'selected' : ''}>Critica</option>
+                        </select>
+                        <div class="issue-assignee-picker" data-task-id="${task.id}">
+                            <button type="button" class="issue-assignee-trigger" onclick="toggleIssueSubtaskAssigneePicker('${task.id}')">
+                                <span>${escapeHtml(task.assignedToName || 'Sin asignar')}</span>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                            <div class="issue-assignee-menu" id="issue-assignee-menu-${task.id}">
+                                <input type="text" placeholder="Buscar miembro..." oninput="filterIssueSubtaskAssigneePicker('${task.id}', this.value)" onclick="event.stopPropagation()">
+                                <button type="button" class="issue-assignee-option" data-member-name="Sin asignar" onclick="selectIssueSubtaskAssigneeFromPicker('${task.id}', '', this)">
+                                    <span class="issue-assignee-option-main">
+                                        <span class="issue-assignee-option-avatar unassigned">?</span>
+                                        <span>Sin asignar</span>
+                                    </span>
+                                    <span class="issue-assignee-option-role">Sin responsable</span>
+                                </button>
+                                ${boardMembers.map(member => `
+                                    <button type="button" class="issue-assignee-option" data-member-name="${escapeHtml(member.name)}" onclick="selectIssueSubtaskAssigneeFromPicker('${task.id}', '${member.id}', this)">
+                                        <span class="issue-assignee-option-main">
+                                            <span class="issue-assignee-option-avatar">${escapeHtml(getInitials(member.name || 'U'))}</span>
+                                            <span>${escapeHtml(member.name)}</span>
+                                        </span>
+                                        <span class="issue-assignee-option-role">${escapeHtml(getScrumRoleLabel(member.role))}</span>
+                                    </button>
+                                `).join('')}
+                            </div>
                         </div>
                         <select onchange="updateIssueSubtaskStatus('${task.id}', this.value)">
                             <option value="Todo" ${task.status === 'Todo' ? 'selected' : ''}>TAREAS POR HACER</option>
@@ -3683,6 +3853,11 @@ function renderIssueSubtasks(tasks) {
                             <option value="Done" ${task.status === 'Done' ? 'selected' : ''}>HECHO</option>
                             <option value="Blocked" ${task.status === 'Blocked' ? 'selected' : ''}>BLOQUEADO</option>
                         </select>
+                        <div class="issue-subtask-actions">
+                            <button type="button" class="btn btn-icon btn-small text-danger" onclick="deleteIssueSubtask('${task.id}')" title="Eliminar subtarea">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
                     </div>
                 `;
             }).join('')}
@@ -3744,26 +3919,132 @@ async function updateIssueStatusFromDetail() {
 async function createIssueSubtask() {
     if (!currentIssueDetail) return;
     const input = document.getElementById('issue-new-subtask-title');
+    const assigneeInput = document.getElementById('issue-new-subtask-assignee');
+    const prioritySelect = document.getElementById('issue-new-subtask-priority');
     const title = input?.value.trim();
     if (!title) return;
 
+    const assigneeId = resolveIssueMemberIdByName(assigneeInput?.value || '');
+    if ((assigneeInput?.value || '').trim() && !assigneeId) {
+        showToast('Selecciona un miembro valido del proyecto', 'error');
+        return;
+    }
+
     try {
-        await apiRequest('/api/tasks/', {
+        const createdTask = await apiRequest('/api/tasks/', {
             method: 'POST',
             body: JSON.stringify({
                 storyId: currentIssueDetail.id,
                 title,
                 description: '',
-                estimatedHours: null
+                estimatedHours: null,
+                priority: parseInt(prioritySelect?.value || '1')
             })
         });
+
+        if (assigneeId) {
+            await apiRequest(`/api/tasks/${createdTask.id}/assign`, {
+                method: 'PATCH',
+                body: JSON.stringify(assigneeId)
+            });
+        }
+
         input.value = '';
+        if (assigneeInput) assigneeInput.value = '';
+        if (prioritySelect) prioritySelect.value = '1';
         const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
         currentIssueDetail = story;
         renderIssueDetail(story);
         showToast('Subtarea creada');
     } catch (error) {
         showToast('Error al crear subtarea', 'error');
+    }
+}
+
+function resolveIssueMemberIdByName(name) {
+    const normalized = (name || '').trim().toLowerCase();
+    if (!normalized) return '';
+    const member = boardMembers.find(m => (m.name || '').trim().toLowerCase() === normalized);
+    return member?.id || '';
+}
+
+function toggleIssueSubtaskAssigneePicker(taskId) {
+    const menu = document.getElementById(`issue-assignee-menu-${taskId}`);
+    if (!menu) return;
+    const isOpen = menu.classList.contains('open');
+    closeAllIssueSubtaskAssigneePickers();
+    if (!isOpen) {
+        menu.classList.add('open');
+        const search = menu.querySelector('input');
+        if (search) {
+            search.value = '';
+            filterIssueSubtaskAssigneePicker(taskId, '');
+            search.focus();
+        }
+    }
+}
+
+function closeAllIssueSubtaskAssigneePickers() {
+    document.querySelectorAll('.issue-assignee-menu.open').forEach(menu => menu.classList.remove('open'));
+}
+
+function filterIssueSubtaskAssigneePicker(taskId, query) {
+    const menu = document.getElementById(`issue-assignee-menu-${taskId}`);
+    if (!menu) return;
+    const q = (query || '').trim().toLowerCase();
+    menu.querySelectorAll('.issue-assignee-option').forEach(option => {
+        const name = (option.dataset.memberName || '').toLowerCase();
+        option.style.display = !q || name.includes(q) ? 'block' : 'none';
+    });
+}
+
+function selectIssueSubtaskAssigneeFromPicker(taskId, assigneeId, buttonEl) {
+    const row = document.querySelector(`.issue-subtask-row[data-task-id="${taskId}"]`);
+    const triggerLabel = row?.querySelector('.issue-assignee-trigger span');
+    if (triggerLabel) {
+        const selectedName = buttonEl?.dataset?.memberName || 'Sin asignar';
+        const selectedRole = buttonEl?.querySelector('.issue-assignee-option-role')?.textContent || '';
+        triggerLabel.textContent = selectedRole && selectedName !== 'Sin asignar'
+            ? `${selectedName} (${selectedRole})`
+            : selectedName;
+    }
+    closeAllIssueSubtaskAssigneePickers();
+    updateIssueSubtaskAssignee(taskId, assigneeId);
+}
+
+async function updateIssueSubtaskDetails(taskId) {
+    if (!currentIssueDetail) return;
+    const task = (currentIssueDetail.tasks || []).find(t => t.id === taskId);
+    if (!task) return;
+
+    const row = document.querySelector(`.issue-subtask-row[data-task-id="${taskId}"]`);
+    const titleInput = row?.querySelector('.issue-subtask-title input');
+    const prioritySelect = document.getElementById(`issue-subtask-priority-${taskId}`);
+    const title = titleInput?.value?.trim();
+
+    if (!title) {
+        showToast('El titulo de la subtarea es obligatorio', 'error');
+        if (titleInput) titleInput.value = task.title || '';
+        return;
+    }
+
+    try {
+        await apiRequest(`/api/tasks/${taskId}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+                storyId: task.storyId,
+                title,
+                description: task.description || '',
+                estimatedHours: task.estimatedHours ?? null,
+                priority: parseInt(prioritySelect?.value ?? task.priority ?? 1)
+            })
+        });
+        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
+        currentIssueDetail = story;
+        renderIssueDetail(story);
+        showToast('Subtarea actualizada');
+    } catch (error) {
+        showToast('Error al actualizar subtarea', 'error');
     }
 }
 
@@ -3779,6 +4060,36 @@ async function updateIssueSubtaskStatus(taskId, status) {
         showToast('Subtarea actualizada');
     } catch (error) {
         showToast('Error al actualizar subtarea', 'error');
+    }
+}
+
+async function updateIssueSubtaskAssignee(taskId, assigneeId) {
+    try {
+        await apiRequest(`/api/tasks/${taskId}/assign`, {
+            method: 'PATCH',
+            body: JSON.stringify(assigneeId || '')
+        });
+        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
+        currentIssueDetail = story;
+        renderIssueDetail(story);
+        showToast('Asignacion de subtarea actualizada');
+    } catch (error) {
+        showToast('Error al asignar subtarea', 'error');
+    }
+}
+
+async function deleteIssueSubtask(taskId) {
+    if (!currentIssueDetail) return;
+    if (!confirm('¿Eliminar esta subtarea?')) return;
+
+    try {
+        await apiRequest(`/api/tasks/${taskId}`, { method: 'DELETE' });
+        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
+        currentIssueDetail = story;
+        renderIssueDetail(story);
+        showToast('Subtarea eliminada');
+    } catch (error) {
+        showToast('Error al eliminar subtarea', 'error');
     }
 }
 
@@ -3812,6 +4123,38 @@ function formatIssueDate(value) {
     });
 }
 
+function formatIssueDateTime(value) {
+    if (!value) return '-';
+    return new Date(value).toLocaleString('es-PE', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function getScrumRoleLabel(role) {
+    if (role === null || role === undefined || role === '') return 'Dev';
+    const byNumber = { 0: 'PO', 1: 'SM', 2: 'Dev' };
+    if (typeof role === 'number' && byNumber[role] !== undefined) return byNumber[role];
+    const key = String(role);
+    const map = {
+        ProductOwner: 'PO',
+        ScrumMaster: 'SM',
+        Developer: 'Dev',
+        Owner: 'Prop.',
+        Admin: 'Admin'
+    };
+    return map[key] || key;
+}
+
+document.addEventListener('click', (event) => {
+    if (!event.target.closest('.issue-assignee-picker')) {
+        closeAllIssueSubtaskAssigneePickers();
+    }
+});
+
 function allowDrop(ev) {
     ev.preventDefault();
     ev.currentTarget.classList.add('drag-over');
@@ -3823,13 +4166,18 @@ async function drop(ev, newStatus) {
     
     const storyId = ev.dataTransfer.getData('storyId');
     if (!storyId) return;
+
+    const fromColumn = ev.dataTransfer.getData('sourceColumnStatus');
+    if (fromColumn && fromColumn === newStatus) {
+        return;
+    }
     
     try {
         await apiRequest(`/api/stories/${storyId}/status`, {
             method: 'PUT',
             body: JSON.stringify({ status: newStatus })
         });
-        loadBoard();
+        refreshCurrentBoardView();
         showToast(`Movido a ${getStatusText(newStatus)}`);
     } catch (error) {
         showToast('Error al mover historia', 'error');
@@ -3851,7 +4199,7 @@ async function deleteStoryKanban(id) {
     
     try {
         await apiRequest(`/api/stories/${id}`, { method: 'DELETE' });
-        loadBoard();
+        refreshCurrentBoardView();
         showToast('Historia eliminada');
     } catch (error) {
         showToast('Error al eliminar', 'error');

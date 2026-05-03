@@ -114,6 +114,8 @@ public class UserStoryDto : UserStory
     public int TaskCount { get; set; }
     public int CompletedTaskCount { get; set; }
     public List<TaskItemDto> Tasks { get; set; } = new();
+    public List<StoryCommentDto> Comments { get; set; } = new();
+    public List<StoryHistoryDto> History { get; set; } = new();
 }
 
 public class ProjectMember
@@ -143,6 +145,8 @@ public class BoardDataDto
 {
     public List<BoardStoryDto> Stories { get; set; } = new();
     public List<ProjectMemberDto> Members { get; set; } = new();
+    /// <summary>True si el proyecto tiene al menos un sprint en estado Active (tablero Scrum).</summary>
+    public bool HasActiveSprint { get; set; }
 }
 
 public class ProjectMemberDto
@@ -162,6 +166,7 @@ public class TaskItem
     public int? EstimatedHours { get; set; }
     public int ActualHours { get; set; }
     public string Status { get; set; } = "Todo";
+    public int Priority { get; set; } = 1;
     public string? AssignedToId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt { get; set; }
@@ -171,6 +176,35 @@ public class TaskItemDto : TaskItem
 {
     public string? AssignedToName { get; set; }
     public string? StoryTitle { get; set; }
+}
+
+public class StoryComment
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string StoryId { get; set; } = string.Empty;
+    public string UserId { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class StoryCommentDto : StoryComment
+{
+    public string UserName { get; set; } = "Usuario";
+}
+
+public class StoryHistoryEntry
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string StoryId { get; set; } = string.Empty;
+    public string UserId { get; set; } = string.Empty;
+    public string EventType { get; set; } = "Update";
+    public string Message { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class StoryHistoryDto : StoryHistoryEntry
+{
+    public string UserName { get; set; } = "Usuario";
 }
 
 public class StandupNote
@@ -311,6 +345,13 @@ public class CreateTaskRequest
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
     public int? EstimatedHours { get; set; }
+    public int Priority { get; set; } = 1;
+}
+
+public class CreateStoryCommentRequest
+{
+    public string UserId { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
 }
 
 public class UpdateStatusRequest

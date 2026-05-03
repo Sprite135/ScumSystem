@@ -100,7 +100,12 @@ public static class StoryRoutes
                     })
                     .ToList();
 
-                return Results.Ok(new BoardDataDto { Stories = stories, Members = members });
+                return Results.Ok(new BoardDataDto
+                {
+                    Stories = stories,
+                    Members = members,
+                    HasActiveSprint = activeSprintIds.Count > 0
+                });
             }
         });
 
@@ -171,6 +176,7 @@ public static class StoryRoutes
                 story.AssigneeId = request.AssigneeId;
                 story.Status = string.IsNullOrWhiteSpace(request.Status) ? story.Status : request.Status;
                 story.UpdatedAt = DateTime.UtcNow;
+                AddStoryHistory(store, story.Id, request.AssigneeId ?? story.AssigneeId ?? story.CreatedById, "StoryUpdated", "Se actualizaron los detalles de la historia.");
 
                 store.Save();
                 return Results.Ok(ToStoryDto(story, store));
@@ -189,6 +195,7 @@ public static class StoryRoutes
 
                 story.Status = request.Status;
                 story.UpdatedAt = DateTime.UtcNow;
+                AddStoryHistory(store, story.Id, story.AssigneeId ?? story.CreatedById, "StatusChanged", $"Estado cambiado a {request.Status}.");
                 store.Save();
                 return Results.Ok(new { message = "Historia actualizada" });
             }
@@ -212,6 +219,7 @@ public static class StoryRoutes
                 story.SprintId = sprintId;
                 story.Status = "Backlog";
                 story.UpdatedAt = DateTime.UtcNow;
+                AddStoryHistory(store, story.Id, story.AssigneeId ?? story.CreatedById, "SprintMove", "Historia movida a sprint.");
                 store.Save();
 
                 return Results.Ok(new { message = "Historia movida al sprint" });
@@ -231,9 +239,51 @@ public static class StoryRoutes
                 story.SprintId = null;
                 story.Status = "Backlog";
                 story.UpdatedAt = DateTime.UtcNow;
+                AddStoryHistory(store, story.Id, story.AssigneeId ?? story.CreatedById, "SprintMove", "Historia movida a backlog.");
                 store.Save();
 
                 return Results.Ok(new { message = "Historia movida al backlog" });
+            }
+        });
+
+        group.MapPost("/{id}/comments", (string id, CreateStoryCommentRequest request, AppDataStore store) =>
+        {
+            lock (store.SyncRoot)
+            {
+                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
+                if (story is null)
+                {
+                    return Results.NotFound();
+                }
+
+                if (string.IsNullOrWhiteSpace(request.Message))
+                {
+                    return Results.BadRequest("El comentario no puede estar vacio.");
+                }
+
+                var comment = new StoryComment
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    StoryId = id,
+                    UserId = request.UserId,
+                    Message = request.Message.Trim(),
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                store.Data.StoryComments.Add(comment);
+                AddStoryHistory(store, id, request.UserId, "CommentAdded", "Se agrego un comentario.");
+                store.Save();
+
+                var userName = store.Data.Users.FirstOrDefault(user => user.Id == comment.UserId)?.Name ?? "Usuario";
+                return Results.Ok(new StoryCommentDto
+                {
+                    Id = comment.Id,
+                    StoryId = comment.StoryId,
+                    UserId = comment.UserId,
+                    Message = comment.Message,
+                    CreatedAt = comment.CreatedAt,
+                    UserName = userName
+                });
             }
         });
 
@@ -249,6 +299,8 @@ public static class StoryRoutes
 
                 store.Data.UserStories.Remove(story);
                 store.Data.Tasks.RemoveAll(task => task.StoryId == id);
+                store.Data.StoryComments.RemoveAll(comment => comment.StoryId == id);
+                store.Data.StoryHistory.RemoveAll(item => item.StoryId == id);
                 store.Save();
                 return Results.Ok(new { message = "Historia eliminada" });
             }
@@ -271,6 +323,7 @@ public static class StoryRoutes
                     EstimatedHours = task.EstimatedHours,
                     ActualHours = task.ActualHours,
                     Status = task.Status,
+                    Priority = task.Priority,
                     AssignedToId = task.AssignedToId,
                     AssignedToName = assignedUser?.Name,
                     StoryTitle = story.Title,
@@ -299,7 +352,47 @@ public static class StoryRoutes
             UpdatedAt = story.UpdatedAt,
             TaskCount = tasks.Count,
             CompletedTaskCount = tasks.Count(task => task.Status == "Done"),
-            Tasks = tasks
+            Tasks = tasks,
+            Comments = store.Data.StoryComments
+                .Where(comment => comment.StoryId == story.Id)
+                .OrderByDescending(comment => comment.CreatedAt)
+                .Select(comment => new StoryCommentDto
+                {
+                    Id = comment.Id,
+                    StoryId = comment.StoryId,
+                    UserId = comment.UserId,
+                    Message = comment.Message,
+                    CreatedAt = comment.CreatedAt,
+                    UserName = store.Data.Users.FirstOrDefault(user => user.Id == comment.UserId)?.Name ?? "Usuario"
+                })
+                .ToList(),
+            History = store.Data.StoryHistory
+                .Where(item => item.StoryId == story.Id)
+                .OrderByDescending(item => item.CreatedAt)
+                .Select(item => new StoryHistoryDto
+                {
+                    Id = item.Id,
+                    StoryId = item.StoryId,
+                    UserId = item.UserId,
+                    EventType = item.EventType,
+                    Message = item.Message,
+                    CreatedAt = item.CreatedAt,
+                    UserName = store.Data.Users.FirstOrDefault(user => user.Id == item.UserId)?.Name ?? "Sistema"
+                })
+                .ToList()
         };
+    }
+
+    private static void AddStoryHistory(AppDataStore store, string storyId, string? userId, string eventType, string message)
+    {
+        store.Data.StoryHistory.Add(new StoryHistoryEntry
+        {
+            Id = Guid.NewGuid().ToString(),
+            StoryId = storyId,
+            UserId = string.IsNullOrWhiteSpace(userId) ? "system" : userId!,
+            EventType = eventType,
+            Message = message,
+            CreatedAt = DateTime.UtcNow
+        });
     }
 }

@@ -92,6 +92,8 @@ public sealed class AppDataSnapshot
     public List<Sprint> Sprints { get; set; } = new();
     public List<UserStory> UserStories { get; set; } = new();
     public List<TaskItem> Tasks { get; set; } = new();
+    public List<StoryComment> StoryComments { get; set; } = new();
+    public List<StoryHistoryEntry> StoryHistory { get; set; } = new();
     public List<StandupNote> StandupNotes { get; set; } = new();
     public List<Notification> Notifications { get; set; } = new();
     public List<ProjectInvitation> ProjectInvitations { get; set; } = new();

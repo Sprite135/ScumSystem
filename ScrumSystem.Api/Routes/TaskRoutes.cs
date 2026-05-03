@@ -26,10 +26,12 @@ public static class TaskRoutes
                     Description = request.Description?.Trim(),
                     EstimatedHours = request.EstimatedHours,
                     Status = "Todo",
+                    Priority = request.Priority,
                     CreatedAt = DateTime.UtcNow
                 };
 
                 store.Data.Tasks.Add(task);
+                AddStoryHistory(store, task.StoryId, task.AssignedToId, "SubtaskCreated", $"Subtarea creada: {task.Title}");
                 store.Save();
                 return Results.Created($"/api/tasks/{task.Id}", ToTaskDto(task, store));
             }
@@ -60,6 +62,7 @@ public static class TaskRoutes
                 task.Status = request.Status;
                 task.ActualHours = request.ActualHours;
                 task.CompletedAt = request.Status == "Done" ? DateTime.UtcNow : null;
+                AddStoryHistory(store, task.StoryId, task.AssignedToId, "SubtaskStatus", $"Subtarea '{task.Title}' cambio a {request.Status}.");
                 store.Save();
                 return Results.Ok(new { message = "Status updated" });
             }
@@ -75,7 +78,8 @@ public static class TaskRoutes
                     return Results.NotFound();
                 }
 
-                task.AssignedToId = assignedTo;
+                task.AssignedToId = string.IsNullOrWhiteSpace(assignedTo) ? null : assignedTo;
+                AddStoryHistory(store, task.StoryId, task.AssignedToId, "SubtaskAssignee", $"Asignacion actualizada para subtarea '{task.Title}'.");
                 store.Save();
                 return Results.Ok(new { message = "Task assigned" });
             }
@@ -122,6 +126,8 @@ public static class TaskRoutes
                 task.Title = request.Title.Trim();
                 task.Description = request.Description?.Trim();
                 task.EstimatedHours = request.EstimatedHours;
+                task.Priority = request.Priority;
+                AddStoryHistory(store, task.StoryId, task.AssignedToId, "SubtaskUpdated", $"Subtarea actualizada: {task.Title}");
                 store.Save();
                 return Results.Ok(new { message = "Tarea actualizada exitosamente" });
             }
@@ -137,6 +143,7 @@ public static class TaskRoutes
                     return Results.NotFound();
                 }
 
+                AddStoryHistory(store, task.StoryId, task.AssignedToId, "SubtaskDeleted", $"Subtarea eliminada: {task.Title}");
                 store.Data.Tasks.Remove(task);
                 store.Save();
                 return Results.Ok(new { message = "Tarea eliminada exitosamente" });
@@ -164,6 +171,19 @@ public static class TaskRoutes
             CreatedAt = task.CreatedAt,
             CompletedAt = task.CompletedAt
         };
+    }
+
+    private static void AddStoryHistory(AppDataStore store, string storyId, string? userId, string eventType, string message)
+    {
+        store.Data.StoryHistory.Add(new StoryHistoryEntry
+        {
+            Id = Guid.NewGuid().ToString(),
+            StoryId = storyId,
+            UserId = string.IsNullOrWhiteSpace(userId) ? "system" : userId!,
+            EventType = eventType,
+            Message = message,
+            CreatedAt = DateTime.UtcNow
+        });
     }
 }
 

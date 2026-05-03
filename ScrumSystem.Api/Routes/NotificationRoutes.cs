@@ -85,6 +85,19 @@ public static class NotificationRoutes
                     });
                 }
 
+                if (!string.IsNullOrWhiteSpace(notification.ProjectId))
+                {
+                    var invitation = store.Data.ProjectInvitations.FirstOrDefault(inv =>
+                        inv.ProjectId == notification.ProjectId &&
+                        inv.UserId == notification.UserId &&
+                        inv.Status == "pending");
+                    if (invitation is not null)
+                    {
+                        invitation.Status = "accepted";
+                        invitation.RespondedAt = DateTime.UtcNow;
+                    }
+                }
+
                 notification.Status = "accepted";
                 notification.IsRead = true;
                 store.Save();
@@ -100,6 +113,19 @@ public static class NotificationRoutes
                 if (notification is null)
                 {
                     return Results.NotFound();
+                }
+
+                if (!string.IsNullOrWhiteSpace(notification.ProjectId))
+                {
+                    var invitation = store.Data.ProjectInvitations.FirstOrDefault(inv =>
+                        inv.ProjectId == notification.ProjectId &&
+                        inv.UserId == notification.UserId &&
+                        inv.Status == "pending");
+                    if (invitation is not null)
+                    {
+                        invitation.Status = "rejected";
+                        invitation.RespondedAt = DateTime.UtcNow;
+                    }
                 }
 
                 notification.Status = "rejected";

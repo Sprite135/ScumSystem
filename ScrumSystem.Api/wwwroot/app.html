@@ -21,10 +21,6 @@
                     <i class="fas fa-tachometer-alt"></i>
                     <span>Dashboard</span>
                 </a>
-                <a href="#" class="nav-item" data-page="backlog" onclick="navigateTo('backlog')">
-                    <i class="fas fa-list-alt"></i>
-                    <span>Historias</span>
-                </a>
             </nav>
             
             <!-- Projects Section -->
@@ -191,8 +187,10 @@
             </div>
             <form id="story-form" onsubmit="handleCreateStory(event)">
                 <input type="hidden" id="story-id">
-                <input type="hidden" id="story-project">
-                <input type="hidden" id="story-sprint">
+                <input type="hidden" id="story-edit-project-id">
+                <input type="hidden" id="story-edit-sprint-id">
+                <input type="hidden" id="story-edit-status">
+                <input type="hidden" id="story-edit-assignee-id">
                 <div class="form-group">
                     <label>Título</label>
                     <input type="text" id="story-title" required placeholder="">
@@ -278,6 +276,14 @@
                         <div id="issue-subtasks-list" class="issue-subtasks-list"></div>
                         <div class="issue-subtask-create">
                             <input type="text" id="issue-new-subtask-title" placeholder="Que hay que hacer?">
+                            <select id="issue-new-subtask-priority" title="Prioridad">
+                                <option value="0">Baja</option>
+                                <option value="1" selected>Media</option>
+                                <option value="2">Alta</option>
+                                <option value="3">Critica</option>
+                            </select>
+                            <input type="text" id="issue-new-subtask-assignee" list="issue-members-list" placeholder="Buscar miembro..." title="Asignar miembro">
+                            <datalist id="issue-members-list"></datalist>
                             <button class="issue-subtask-type" type="button"><i class="far fa-check-square"></i> Subtarea</button>
                             <button class="issue-subtask-submit" type="button" onclick="createIssueSubtask()" title="Crear subtarea">
                                 <i class="fas fa-level-down-alt"></i>
@@ -294,18 +300,18 @@
                     <section class="issue-section">
                         <h4>Actividad</h4>
                         <div class="issue-activity-tabs">
-                            <button class="active" type="button">Todo</button>
-                            <button type="button">Comentarios</button>
-                            <button type="button">Historial</button>
+                            <button class="active" type="button" onclick="setIssueActivityFilter('Todo', this)">Todo</button>
+                            <button type="button" onclick="setIssueActivityFilter('Comentarios', this)">Comentarios</button>
+                            <button type="button" onclick="setIssueActivityFilter('Historial', this)">Historial</button>
                         </div>
                         <div class="issue-comment-box">
                             <div class="issue-avatar" id="issue-current-user-avatar">U</div>
-                            <div class="issue-comment-input">Anadir un comentario...</div>
+                            <textarea id="issue-new-comment" class="issue-comment-input" rows="3" placeholder="Anadir comentario de la historia..."></textarea>
                         </div>
-                        <div class="issue-history-row">
-                            <div class="issue-avatar" id="issue-history-avatar">U</div>
-                            <div><strong id="issue-history-user">Usuario</strong> ha actualizado la actividad</div>
+                        <div class="issue-comment-actions">
+                            <button class="btn btn-primary btn-small" type="button" onclick="addIssueComment()">Comentar</button>
                         </div>
+                        <div id="issue-activity-list" class="issue-activity-list"></div>
                     </section>
                 </main>
 
