@@ -1,12 +1,15 @@
 using ScrumSystem.Api.Data;
+using ScrumSystem.Api.Models;
 using ScrumSystem.Api.Routes;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
+// Add services
+builder.Services.AddSingleton<DatabaseContext>();
 builder.Services.AddSingleton<AppDataStore>();
+
+// Configure JSON serialization to include null values and use camelCase
 builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
@@ -29,6 +32,10 @@ var app = builder.Build();
 app.UseCors("AllowAll");
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// Initialize database
+var dbContext = app.Services.GetRequiredService<DatabaseContext>();
+dbContext.Initialize();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 
