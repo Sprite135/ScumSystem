@@ -3716,12 +3716,30 @@ async function assignStoryToMember(storyId, memberId) {
             })
         });
         
-        // Reload the board to reflect changes
-        await loadBoard();
-        
-        // Get member name for toast message
+        // Update the card's assignee display without reloading the board
         const project = projects.find(p => p.id === selectedProjectId);
         const member = memberId ? project?.members?.find(m => m.id === memberId) : null;
+        const assigneeInitials = member ? member.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : '?';
+        
+        // Find and update the assignee avatar in the card
+        const card = document.querySelector(`.kanban-card[data-story-id="${storyId}"]`);
+        if (card) {
+            const assigneeAvatar = card.querySelector('.kanban-card-assignee');
+            if (assigneeAvatar) {
+                if (member) {
+                    assigneeAvatar.className = 'kanban-card-assignee assigned';
+                    assigneeAvatar.textContent = assigneeInitials;
+                    assigneeAvatar.title = `${escapeHtml(member.name)} (${member.role}) - Click para reasignar`;
+                    assigneeAvatar.dataset.assigneeId = member.id;
+                } else {
+                    assigneeAvatar.className = 'kanban-card-assignee unassigned';
+                    assigneeAvatar.textContent = '?';
+                    assigneeAvatar.title = 'Sin asignar - Click para asignar';
+                    assigneeAvatar.dataset.assigneeId = '';
+                }
+            }
+        }
+        
         showToast(member ? `Asignado a ${member.name}` : 'Sin asignar', 'success');
     } catch (error) {
         console.error('Error assigning story:', error);
