@@ -6785,9 +6785,25 @@ padding: 0;
     background: var(--purple-alpha-20);
 }
 
-.assignee-option span {
+.assignee-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.assignee-name {
     color: var(--text-primary);
     font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.assignee-email {
+    color: var(--text-muted);
+    font-size: 12px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
