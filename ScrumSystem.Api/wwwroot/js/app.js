@@ -3703,7 +3703,7 @@ async function assignStoryToMember(storyId, memberId) {
         // Get current story data
         const story = await apiRequest(`/api/stories/${storyId}`);
         
-        // Update the story with new assignee
+        // Update the story with new assignee (keep current sprintId and status)
         await apiRequest(`/api/stories/${storyId}`, {
             method: 'PUT',
             body: JSON.stringify({
@@ -3712,7 +3712,9 @@ async function assignStoryToMember(storyId, memberId) {
                 description: story.description,
                 priority: story.priority,
                 storyPoints: story.storyPoints,
-                assigneeId: memberId
+                assigneeId: memberId,
+                sprintId: story.sprintId,
+                status: story.status
             })
         });
         
