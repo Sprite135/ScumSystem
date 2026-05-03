@@ -3555,12 +3555,12 @@ function createKanbanCard(story, members) {
     card.setAttribute('role', 'button');
     card.setAttribute('aria-label', `Abrir ${story.title}`);
     
-    // Generate avatar HTML for assignee
+    // Generate avatar HTML for assignee (clickable)
     const assignee = members.find(m => m.id === story.assigneeId);
     const assigneeInitials = assignee ? assignee.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : '?';
     const assigneeAvatar = assignee 
-        ? `<div class="kanban-card-assignee assigned" title="${escapeHtml(assignee.name)} (${assignee.role})">${assigneeInitials}</div>`
-        : `<div class="kanban-card-assignee unassigned" title="Sin asignar">?</div>`;
+        ? `<div class="kanban-card-assignee assigned" data-story-id="${story.id}" onclick="showAssigneeDropdown(event, '${story.id}')" title="${escapeHtml(assignee.name)} (${assignee.role}) - Click para reasignar">${assigneeInitials}</div>`
+        : `<div class="kanban-card-assignee unassigned" data-story-id="${story.id}" onclick="showAssigneeDropdown(event, '${story.id}')" title="Sin asignar - Click para asignar">?</div>`;
     
     // Generate member avatars row (like Jira)
     const memberAvatars = members.slice(0, 3).map((m, i) => {
@@ -3628,6 +3628,106 @@ function createKanbanCard(story, members) {
     });
     
     return card;
+}
+
+// Show dropdown for assignee selection on kanban card
+function showAssigneeDropdown(event, storyId) {
+    event.stopPropagation();
+    event.preventDefault();
+    
+    // Close any existing dropdowns
+    document.querySelectorAll('.assignee-dropdown').forEach(d => d.remove());
+    
+    // Get the project and members
+    const project = projects.find(p => p.id === selectedProjectId);
+    const members = project?.members || [];
+    
+    // Get the story
+    const storyElement = document.querySelector(`[data-story-id="${storyId}"]`);
+    if (!storyElement) return;
+    
+    // Create dropdown HTML
+    const dropdown = document.createElement('div');
+    dropdown.className = 'assignee-dropdown';
+    dropdown.dataset.storyId = storyId;
+    
+    // Build member options
+    let optionsHtml = `
+        <div class="assignee-option ${!storyElement.dataset.assigneeId ? 'selected' : ''}" onclick="assignStoryToMember('${storyId}', null)">
+            <div class="assignee-avatar unassigned">?</div>
+            <span>Sin asignar</span>
+        </div>
+    `;
+    
+    members.forEach(member => {
+        const initials = member.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+        const isAssigned = storyElement.dataset.assigneeId === member.id;
+        optionsHtml += `
+            <div class="assignee-option ${isAssigned ? 'selected' : ''}" onclick="assignStoryToMember('${storyId}', '${member.id}')">
+                <div class="assignee-avatar">${initials}</div>
+                <span>${escapeHtml(member.name)}</span>
+            </div>
+        `;
+    });
+    
+    dropdown.innerHTML = optionsHtml;
+    
+    // Position dropdown near the clicked element
+    const rect = event.target.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.left = `${rect.left}px`;
+    dropdown.style.top = `${rect.bottom + 5}px`;
+    dropdown.style.zIndex = '9999';
+    
+    document.body.appendChild(dropdown);
+    
+    // Close dropdown when clicking outside
+    const closeDropdown = (e) => {
+        if (!dropdown.contains(e.target) && e.target !== event.target) {
+            dropdown.remove();
+            document.removeEventListener('click', closeDropdown);
+        }
+    };
+    
+    setTimeout(() => {
+        document.addEventListener('click', closeDropdown);
+    }, 10);
+}
+
+// Assign story to a member
+async function assignStoryToMember(storyId, memberId) {
+    // Close dropdown
+    document.querySelectorAll('.assignee-dropdown').forEach(d => d.remove());
+    
+    try {
+        // Get current story data
+        const story = await apiRequest(`/api/stories/${storyId}`);
+        
+        // Update the story with new assignee
+        await apiRequest(`/api/stories/${storyId}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+                projectId: story.projectId,
+                title: story.title,
+                description: story.description,
+                priority: story.priority,
+                storyPoints: story.storyPoints,
+                assigneeId: memberId
+            })
+        });
+        
+        // Reload the board to reflect changes
+        const project = projects.find(p => p.id === selectedProjectId);
+        if (project) {
+            await loadBoardView(project);
+        }
+        
+        const member = memberId ? project?.members?.find(m => m.id === memberId) : null;
+        showToast(member ? `Asignado a ${member.name}` : 'Sin asignar', 'success');
+    } catch (error) {
+        console.error('Error assigning story:', error);
+        showToast('Error al asignar historia', 'error');
+    }
 }
 
 async function openIssueDetail(storyId) {

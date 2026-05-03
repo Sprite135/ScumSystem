@@ -6756,6 +6756,63 @@ padding: 0;
     border: 2px dashed var(--border-color);
 }
 
+/* Assignee Dropdown Styles */
+.assignee-dropdown {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    padding: 8px 0;
+    min-width: 200px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.assignee-option {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.assignee-option:hover {
+    background: var(--hover-bg);
+}
+
+.assignee-option.selected {
+    background: var(--purple-alpha-20);
+}
+
+.assignee-option span {
+    color: var(--text-primary);
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.assignee-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    background: linear-gradient(135deg, var(--primary-purple) 0%, var(--primary-cyan) 100%);
+    color: white;
+    flex-shrink: 0;
+}
+
+.assignee-avatar.unassigned {
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    border: 2px dashed var(--border-color);
+}
+
 @media (max-width: 1200px) {
     .kanban-board {
         grid-template-columns: repeat(2, 1fr);
