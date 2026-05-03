@@ -3664,7 +3664,7 @@ function showAssigneeDropdown(event, storyId) {
         const isAssigned = storyElement.dataset.assigneeId === member.id;
         optionsHtml += `
             <div class="assignee-option ${isAssigned ? 'selected' : ''}" onclick="assignStoryToMember('${storyId}', '${member.id}')">
-                <div class="assignee-avatar">${initials}</div>
+                <div class="assignee-avatar assigned">${initials}</div>
                 <div class="assignee-info">
                     <span class="assignee-name">${escapeHtml(member.name)}</span>
                     <span class="assignee-email">${escapeHtml(member.email)}</span>
