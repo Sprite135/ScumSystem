@@ -3945,10 +3945,13 @@ function renderIssueSubtasks(tasks) {
                             <option value="3" ${Number(task.priority ?? 1) === 3 ? 'selected' : ''}>Critica</option>
                         </select>
                         <div class="issue-assignee-picker" data-task-id="${task.id}">
-                            <button type="button" class="issue-assignee-trigger" onclick="toggleIssueSubtaskAssigneePicker('${task.id}')">
-                                <span>${escapeHtml(task.assignedToName || 'Sin asignar')}</span>
-                                <i class="fas fa-chevron-down"></i>
-                            </button>
+                            ${(() => {
+                                const assignedMember = boardMembers.find(m => m.id === task.assignedToId);
+                                const initials = assignedMember ? getInitials(assignedMember.name) : '?';
+                                const avatarClass = assignedMember ? 'subtask-avatar assigned' : 'subtask-avatar unassigned';
+                                const title = assignedMember ? `${escapeHtml(assignedMember.name)} - Click para reasignar` : 'Sin asignar - Click para asignar';
+                                return `<div class="${avatarClass}" onclick="toggleIssueSubtaskAssigneePicker('${task.id}')" title="${title}">${initials}</div>`;
+                            })()}
                             <div class="issue-assignee-menu" id="issue-assignee-menu-${task.id}">
                                 <input type="text" placeholder="Buscar miembro..." oninput="filterIssueSubtaskAssigneePicker('${task.id}', this.value)" onclick="event.stopPropagation()">
                                 <button type="button" class="issue-assignee-option" data-member-name="Sin asignar" onclick="selectIssueSubtaskAssigneeFromPicker('${task.id}', '', this)">
@@ -3964,7 +3967,7 @@ function renderIssueSubtasks(tasks) {
                                             <span class="issue-assignee-option-avatar">${escapeHtml(getInitials(member.name || 'U'))}</span>
                                             <span>${escapeHtml(member.name)}</span>
                                         </span>
-                                        <span class="issue-assignee-option-role">${escapeHtml(getScrumRoleLabel(member.role))}</span>
+                                        <span class="issue-assignee-option-email">${escapeHtml(member.email || '')}</span>
                                     </button>
                                 `).join('')}
                             </div>
