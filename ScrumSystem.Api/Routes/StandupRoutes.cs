@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using ScrumSystem.Api.Data;
 using ScrumSystem.Api.Models;
 
@@ -9,95 +10,185 @@ public static class StandupRoutes
     {
         var group = app.MapGroup("/api/standup");
 
-        group.MapPost("/", (CreateStandupRequest request, AppDataStore store) =>
+        group.MapPost("/", async (CreateStandupRequest request, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var noteId = Guid.NewGuid();
+            var today = DateTime.UtcNow.Date;
+
+            using (var insertCmd = new SqlCommand(@"
+                INSERT INTO StandupNotes (Id, SprintId, UserId, Yesterday, Today, Blockers, CreatedAt) 
+                VALUES (@Id, @SprintId, @UserId, @Yesterday, @Today, @Blockers, @CreatedAt)", connection))
             {
-                var note = new StandupNote
+                insertCmd.Parameters.AddWithValue("@Id", noteId);
+                insertCmd.Parameters.AddWithValue("@SprintId", Guid.Parse(request.SprintId));
+                insertCmd.Parameters.AddWithValue("@UserId", Guid.Parse(request.UserId));
+                insertCmd.Parameters.AddWithValue("@Yesterday", (object?)request.Yesterday?.Trim() ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@Today", (object?)request.Today?.Trim() ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@Blockers", (object?)request.Blockers?.Trim() ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                await insertCmd.ExecuteNonQueryAsync();
+            }
+
+            return Results.Created($"/api/standup/{noteId}", new { id = noteId.ToString(), message = "Nota de standup creada exitosamente" });
+        });
+
+        group.MapGet("/sprint/{sprintId}", async (string sprintId, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var sql = @"
+                SELECT n.Id, CAST(n.SprintId AS NVARCHAR(36)) as SprintId, CAST(n.UserId AS NVARCHAR(36)) as UserId,
+                       n.Yesterday, n.Today, n.Blockers, n.CreatedAt, u.Name as UserName
+                FROM StandupNotes n
+                LEFT JOIN Users u ON n.UserId = u.Id
+                WHERE CAST(n.SprintId AS NVARCHAR(36)) = @SprintId
+                ORDER BY n.CreatedAt DESC";
+
+            var notes = new List<StandupNoteDto>();
+            using (var cmd = new SqlCommand(sql, connection))
+            {
+                cmd.Parameters.AddWithValue("@SprintId", sprintId);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
                 {
-                    Id = Guid.NewGuid().ToString(),
-                    SprintId = request.SprintId,
-                    UserId = request.UserId,
-                    Date = request.Date.Date,
-                    Yesterday = request.Yesterday?.Trim(),
-                    Today = request.Today?.Trim(),
-                    Blockers = request.Blockers?.Trim(),
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                store.Data.StandupNotes.Add(note);
-                store.Save();
-                return Results.Created($"/api/standup/{note.Id}", note);
+                    notes.Add(new StandupNoteDto
+                    {
+                        Id = reader.GetString(0),
+                        SprintId = reader.GetString(1),
+                        UserId = reader.GetString(2),
+                        Yesterday = reader.IsDBNull(3) ? null : reader.GetString(3),
+                        Today = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        Blockers = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        CreatedAt = reader.GetDateTime(6),
+                        UserName = reader.IsDBNull(7) ? null : reader.GetString(7)
+                    });
+                }
             }
+
+            return Results.Ok(notes);
         });
 
-        group.MapGet("/sprint/{sprintId}", (string sprintId, AppDataStore store) =>
+        group.MapGet("/sprint/{sprintId}/today", async (string sprintId, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var today = DateTime.UtcNow.Date;
+            var sql = @"
+                SELECT n.Id, CAST(n.SprintId AS NVARCHAR(36)) as SprintId, CAST(n.UserId AS NVARCHAR(36)) as UserId,
+                       n.Yesterday, n.Today, n.Blockers, n.CreatedAt, u.Name as UserName
+                FROM StandupNotes n
+                LEFT JOIN Users u ON n.UserId = u.Id
+                WHERE CAST(n.SprintId AS NVARCHAR(36)) = @SprintId AND CAST(n.CreatedAt AS DATE) = @Today
+                ORDER BY n.CreatedAt DESC";
+
+            var notes = new List<StandupNoteDto>();
+            using (var cmd = new SqlCommand(sql, connection))
             {
-                return Results.Ok(store.Data.StandupNotes
-                    .Where(note => note.SprintId == sprintId)
-                    .OrderByDescending(note => note.Date)
-                    .Select(note => ToStandupDto(note, store))
-                    .ToList());
+                cmd.Parameters.AddWithValue("@SprintId", sprintId);
+                cmd.Parameters.AddWithValue("@Today", today);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    notes.Add(new StandupNoteDto
+                    {
+                        Id = reader.GetString(0),
+                        SprintId = reader.GetString(1),
+                        UserId = reader.GetString(2),
+                        Yesterday = reader.IsDBNull(3) ? null : reader.GetString(3),
+                        Today = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        Blockers = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        CreatedAt = reader.GetDateTime(6),
+                        UserName = reader.IsDBNull(7) ? null : reader.GetString(7)
+                    });
+                }
             }
+
+            return Results.Ok(notes);
         });
 
-        group.MapGet("/sprint/{sprintId}/today", (string sprintId, AppDataStore store) =>
+        group.MapPatch("/{id}", async (string id, CreateStandupRequest request, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
-            {
-                var today = DateTime.Today;
-                return Results.Ok(store.Data.StandupNotes
-                    .Where(note => note.SprintId == sprintId && note.Date.Date == today)
-                    .OrderBy(note => note.CreatedAt)
-                    .Select(note => ToStandupDto(note, store))
-                    .ToList());
-            }
-        });
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
 
-        group.MapPatch("/{id}", (string id, CreateStandupRequest request, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
+            using (var updateCmd = new SqlCommand(@"
+                UPDATE StandupNotes 
+                SET Yesterday = @Yesterday, Today = @Today, Blockers = @Blockers
+                WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
-                var note = store.Data.StandupNotes.FirstOrDefault(item => item.Id == id);
-                if (note is null)
+                updateCmd.Parameters.AddWithValue("@Id", Guid.Parse(id));
+                updateCmd.Parameters.AddWithValue("@Yesterday", (object?)request.Yesterday?.Trim() ?? DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@Today", (object?)request.Today?.Trim() ?? DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@Blockers", (object?)request.Blockers?.Trim() ?? DBNull.Value);
+                var rowsAffected = await updateCmd.ExecuteNonQueryAsync();
+                
+                if (rowsAffected == 0)
                 {
                     return Results.NotFound();
                 }
-
-                note.Yesterday = request.Yesterday?.Trim();
-                note.Today = request.Today?.Trim();
-                note.Blockers = request.Blockers?.Trim();
-                store.Save();
-                return Results.Ok(new { message = "Note updated" });
             }
+
+            return Results.Ok(new { message = "Nota de standup actualizada exitosamente" });
         });
 
-        group.MapGet("/sprint/{sprintId}/missing", (string sprintId, AppDataStore store) =>
+        group.MapGet("/sprint/{sprintId}/missing", async (string sprintId, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Obtener el ProjectId del sprint
+            string projectId = "";
+            using (var sprintCmd = new SqlCommand("SELECT CAST(ProjectId AS NVARCHAR(36)) FROM Sprints WHERE CAST(Id AS NVARCHAR(36)) = @SprintId", connection))
             {
-                var sprint = store.Data.Sprints.FirstOrDefault(item => item.Id == sprintId);
-                if (sprint is null)
+                sprintCmd.Parameters.AddWithValue("@SprintId", sprintId);
+                var result = await sprintCmd.ExecuteScalarAsync();
+                if (result == null)
                 {
-                    return Results.NotFound();
+                    return Results.NotFound(new { message = "Sprint no encontrado" });
                 }
-
-                var today = DateTime.Today;
-                var completedUserIds = store.Data.StandupNotes
-                    .Where(note => note.SprintId == sprintId && note.Date.Date == today)
-                    .Select(note => note.UserId)
-                    .ToHashSet();
-
-                var users = store.Data.ProjectMembers
-                    .Where(member => member.ProjectId == sprint.ProjectId && !completedUserIds.Contains(member.UserId))
-                    .Join(store.Data.Users, member => member.UserId, user => user.Id, (_, user) => UserRoutes.ToUserDto(user))
-                    .OrderBy(user => user.Name)
-                    .ToList();
-
-                return Results.Ok(users);
+                projectId = result.ToString()!;
             }
+
+            // Obtener usuarios que NO han completado standup hoy
+            var today = DateTime.Today;
+            var sql = @"
+                SELECT CAST(u.Id AS NVARCHAR(36)), u.Name, u.Email, u.Role, u.CreatedAt
+                FROM ProjectMembers pm
+                INNER JOIN Users u ON pm.UserId = u.Id
+                WHERE CAST(pm.ProjectId AS NVARCHAR(36)) = @ProjectId
+                  AND CAST(pm.UserId AS NVARCHAR(36)) NOT IN (
+                      SELECT CAST(UserId AS NVARCHAR(36)) 
+                      FROM StandupNotes 
+                      WHERE CAST(SprintId AS NVARCHAR(36)) = @SprintId AND CAST(Date AS DATE) = @Today
+                  )
+                ORDER BY u.Name";
+
+            var users = new List<UserDto>();
+            using (var cmd = new SqlCommand(sql, connection))
+            {
+                cmd.Parameters.AddWithValue("@ProjectId", projectId);
+                cmd.Parameters.AddWithValue("@SprintId", sprintId);
+                cmd.Parameters.AddWithValue("@Today", today);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    users.Add(new UserDto
+                    {
+                        Id = reader.GetString(0),
+                        Name = reader.GetString(1),
+                        Email = reader.GetString(2),
+                        Role = Enum.Parse<UserRole>(reader.GetString(3)),
+                        CreatedAt = reader.GetDateTime(4)
+                    });
+                }
+            }
+
+            return Results.Ok(users);
         });
     }
 

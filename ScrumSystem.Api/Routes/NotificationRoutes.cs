@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using ScrumSystem.Api.Data;
 using ScrumSystem.Api.Models;
 
@@ -9,170 +10,259 @@ public static class NotificationRoutes
     {
         var group = app.MapGroup("/api/notifications");
 
-        group.MapGet("/", (string userId, AppDataStore store) =>
+        group.MapGet("/", async (string userId, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
-            {
-                var notifications = store.Data.Notifications
-                    .Where(notification => notification.UserId == userId)
-                    .OrderByDescending(notification => notification.CreatedAt)
-                    .Select(notification => ToNotificationDto(notification, store))
-                    .ToList();
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
 
-                return Results.Ok(notifications);
-            }
-        });
+            var sql = @"
+                SELECT CAST(n.Id AS NVARCHAR(36)), CAST(n.UserId AS NVARCHAR(36)) as UserId, CAST(n.ProjectId AS NVARCHAR(36)) as ProjectId,
+                       CAST(n.CreatorId AS NVARCHAR(36)) as CreatorId, n.Title, n.Message, n.Type, n.IsRead, n.CreatedAt,
+                       p.Name as ProjectName, u.Name as CreatorName
+                FROM Notifications n
+                LEFT JOIN Projects p ON n.ProjectId = p.Id
+                LEFT JOIN Users u ON n.CreatorId = u.Id
+                WHERE CAST(n.UserId AS NVARCHAR(36)) = @UserId
+                ORDER BY n.CreatedAt DESC";
 
-        group.MapGet("/unread-count", (string userId, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
+            var notifications = new List<NotificationDto>();
+            using (var cmd = new SqlCommand(sql, connection))
             {
-                var count = store.Data.Notifications.Count(notification => notification.UserId == userId && !notification.IsRead);
-                return Results.Ok(new { count });
-            }
-        });
-
-        group.MapPut("/{id}/read", (string id, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
-            {
-                var notification = store.Data.Notifications.FirstOrDefault(item => item.Id == id);
-                if (notification is null)
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
                 {
-                    return Results.NotFound();
-                }
-
-                notification.IsRead = true;
-                store.Save();
-                return Results.Ok(new { message = "Notificación marcada como leída" });
-            }
-        });
-
-        group.MapPut("/read-all", (string userId, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
-            {
-                foreach (var notification in store.Data.Notifications.Where(item => item.UserId == userId))
-                {
-                    notification.IsRead = true;
-                }
-
-                store.Save();
-                return Results.Ok(new { message = "Todas las notificaciones marcadas como leídas" });
-            }
-        });
-
-        group.MapPost("/{id}/accept", (string id, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
-            {
-                var notification = store.Data.Notifications.FirstOrDefault(item => item.Id == id);
-                if (notification is null)
-                {
-                    return Results.NotFound();
-                }
-
-                if (!string.IsNullOrWhiteSpace(notification.ProjectId) &&
-                    store.Data.ProjectMembers.All(member => member.ProjectId != notification.ProjectId || member.UserId != notification.UserId))
-                {
-                    store.Data.ProjectMembers.Add(new ProjectMember
+                    notifications.Add(new NotificationDto
                     {
-                        Id = Guid.NewGuid().ToString(),
-                        ProjectId = notification.ProjectId!,
-                        UserId = notification.UserId,
-                        Role = "Developer",
-                        JoinedAt = DateTime.UtcNow
+                        Id = reader.GetString(0),
+                        UserId = reader.GetString(1),
+                        ProjectId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        CreatorId = reader.GetString(3),
+                        Title = reader.GetString(4),
+                        Message = reader.GetString(5),
+                        Type = reader.GetString(6),
+                        IsRead = reader.GetBoolean(7),
+                        CreatedAt = reader.GetDateTime(8),
+                        ProjectName = reader.IsDBNull(9) ? null : reader.GetString(9),
+                        CreatorName = reader.GetString(10)
                     });
                 }
+            }
 
-                if (!string.IsNullOrWhiteSpace(notification.ProjectId))
-                {
-                    var invitation = store.Data.ProjectInvitations.FirstOrDefault(inv =>
-                        inv.ProjectId == notification.ProjectId &&
-                        inv.UserId == notification.UserId &&
-                        inv.Status == "pending");
-                    if (invitation is not null)
-                    {
-                        invitation.Status = "accepted";
-                        invitation.RespondedAt = DateTime.UtcNow;
-                    }
-                }
+            return Results.Ok(notifications);
+        });
 
-                notification.Status = "accepted";
-                notification.IsRead = true;
-                store.Save();
-                return Results.Ok(new { message = "Invitación aceptada" });
+        group.MapGet("/unread-count", async (string userId, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            using (var cmd = new SqlCommand("SELECT COUNT(*) FROM Notifications WHERE CAST(UserId AS NVARCHAR(36)) = @UserId AND IsRead = 0", connection))
+            {
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                var count = await cmd.ExecuteScalarAsync();
+                return Results.Ok(new { count = count ?? 0 });
             }
         });
 
-        group.MapPost("/{id}/reject", (string id, AppDataStore store) =>
+        group.MapPut("/{id}/read", async (string id, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            using (var cmd = new SqlCommand("UPDATE Notifications SET IsRead = 1 WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
-                var notification = store.Data.Notifications.FirstOrDefault(item => item.Id == id);
-                if (notification is null)
+                cmd.Parameters.AddWithValue("@Id", id);
+                var rowsAffected = await cmd.ExecuteNonQueryAsync();
+                
+                if (rowsAffected == 0)
                 {
                     return Results.NotFound();
                 }
+            }
 
-                if (!string.IsNullOrWhiteSpace(notification.ProjectId))
+            return Results.Ok(new { message = "Notificación marcada como leída" });
+        });
+
+        group.MapPut("/read-all", async (string userId, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            using (var cmd = new SqlCommand("UPDATE Notifications SET IsRead = 1 WHERE CAST(UserId AS NVARCHAR(36)) = @UserId", connection))
+            {
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            return Results.Ok(new { message = "Todas las notificaciones marcadas como leídas" });
+        });
+
+        group.MapPost("/{id}/accept", async (string id, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            using var transaction = connection.BeginTransaction();
+            try
+            {
+                // Obtener información de la notificación (invitación)
+                string notificationType = "", projectId = "", userId = "", invitedById = "", projectName = "";
+                using (var notifCmd = new SqlCommand(@"
+                    SELECT Type, CAST(ProjectId AS NVARCHAR(36)) as ProjectId, CAST(UserId AS NVARCHAR(36)) as UserId, 
+                           CAST(CreatorId AS NVARCHAR(36)) as CreatorId
+                    FROM Notifications 
+                    WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection, transaction))
                 {
-                    var invitation = store.Data.ProjectInvitations.FirstOrDefault(inv =>
-                        inv.ProjectId == notification.ProjectId &&
-                        inv.UserId == notification.UserId &&
-                        inv.Status == "pending");
-                    if (invitation is not null)
+                    notifCmd.Parameters.AddWithValue("@Id", id);
+                    using var reader = await notifCmd.ExecuteReaderAsync();
+                    if (!await reader.ReadAsync())
                     {
-                        invitation.Status = "rejected";
-                        invitation.RespondedAt = DateTime.UtcNow;
+                        reader.Close();
+                        transaction.Rollback();
+                        return Results.NotFound(new { message = "Notificación no encontrada" });
+                    }
+                    notificationType = reader.GetString(0);
+                    projectId = reader.IsDBNull(1) ? "" : reader.GetString(1);
+                    userId = reader.GetString(2);
+                    invitedById = reader.GetString(3);
+                    reader.Close();
+                }
+
+                // Solo procesar si es invitación de proyecto
+                if (notificationType == "project_invitation" && !string.IsNullOrEmpty(projectId))
+                {
+                    // Obtener nombre del proyecto
+                    using (var projCmd = new SqlCommand("SELECT Name FROM Projects WHERE CAST(Id AS NVARCHAR(36)) = @ProjectId", connection, transaction))
+                    {
+                        projCmd.Parameters.AddWithValue("@ProjectId", projectId);
+                        var result = await projCmd.ExecuteScalarAsync();
+                        projectName = result?.ToString() ?? "";
+                    }
+
+                    // Buscar y actualizar la invitación correspondiente
+                    using (var updateInvCmd = new SqlCommand(@"
+                        UPDATE ProjectInvitations 
+                        SET Status = 'accepted', RespondedAt = @RespondedAt
+                        WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId AND CAST(UserId AS NVARCHAR(36)) = @UserId AND Status = 'pending'", connection, transaction))
+                    {
+                        updateInvCmd.Parameters.AddWithValue("@ProjectId", projectId);
+                        updateInvCmd.Parameters.AddWithValue("@UserId", userId);
+                        updateInvCmd.Parameters.AddWithValue("@RespondedAt", DateTime.UtcNow);
+                        await updateInvCmd.ExecuteNonQueryAsync();
+                    }
+
+                    // Agregar como miembro
+                    using (var memberCmd = new SqlCommand(@"
+                        IF NOT EXISTS (SELECT 1 FROM ProjectMembers WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId AND CAST(UserId AS NVARCHAR(36)) = @UserId)
+                        INSERT INTO ProjectMembers (Id, ProjectId, UserId, Role, JoinedAt) 
+                        VALUES (@Id, @ProjectId, @UserId, @Role, @JoinedAt)", connection, transaction))
+                    {
+                        memberCmd.Parameters.AddWithValue("@Id", Guid.NewGuid());
+                        memberCmd.Parameters.AddWithValue("@ProjectId", Guid.Parse(projectId));
+                        memberCmd.Parameters.AddWithValue("@UserId", Guid.Parse(userId));
+                        memberCmd.Parameters.AddWithValue("@Role", "Developer");
+                        memberCmd.Parameters.AddWithValue("@JoinedAt", DateTime.UtcNow);
+                        await memberCmd.ExecuteNonQueryAsync();
+                    }
+
+                    // Notificar al creador
+                    using (var notifCreatorCmd = new SqlCommand(@"
+                        INSERT INTO Notifications (Id, UserId, ProjectId, CreatorId, Title, Message, Type, IsRead, CreatedAt)
+                        VALUES (@Id, @UserId, @ProjectId, @CreatorId, @Title, @Message, @Type, 0, @CreatedAt)", connection, transaction))
+                    {
+                        notifCreatorCmd.Parameters.AddWithValue("@Id", Guid.NewGuid());
+                        notifCreatorCmd.Parameters.AddWithValue("@UserId", Guid.Parse(invitedById));
+                        notifCreatorCmd.Parameters.AddWithValue("@ProjectId", Guid.Parse(projectId));
+                        notifCreatorCmd.Parameters.AddWithValue("@CreatorId", Guid.Parse(userId));
+                        notifCreatorCmd.Parameters.AddWithValue("@Title", "Invitación aceptada");
+                        notifCreatorCmd.Parameters.AddWithValue("@Message", $"Un usuario ha aceptado unirse al proyecto '{projectName}'.");
+                        notifCreatorCmd.Parameters.AddWithValue("@Type", "project_invitation_accepted");
+                        notifCreatorCmd.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                        await notifCreatorCmd.ExecuteNonQueryAsync();
                     }
                 }
 
-                notification.Status = "rejected";
-                notification.IsRead = true;
-                store.Save();
-                return Results.Ok(new { message = "Invitación rechazada" });
+                // Marcar notificación como leída
+                using (var cmd = new SqlCommand("UPDATE Notifications SET IsRead = 1 WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection, transaction))
+                {
+                    cmd.Parameters.AddWithValue("@Id", id);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                transaction.Commit();
+                return Results.Ok(new { message = "Invitación aceptada. Ahora eres miembro del proyecto." });
+            }
+            catch (Exception ex)
+            {
+                transaction.Rollback();
+                return Results.Problem($"Error al aceptar invitación: {ex.Message}");
             }
         });
 
-        group.MapDelete("/{id}", (string id, AppDataStore store) =>
+        group.MapPost("/{id}/reject", async (string id, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            using (var deleteCmd = new SqlCommand("DELETE FROM Notifications WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
-                var notification = store.Data.Notifications.FirstOrDefault(item => item.Id == id);
-                if (notification is null)
+                deleteCmd.Parameters.AddWithValue("@Id", id);
+                var rowsAffected = await deleteCmd.ExecuteNonQueryAsync();
+                
+                if (rowsAffected == 0)
                 {
                     return Results.NotFound();
                 }
-
-                store.Data.Notifications.Remove(notification);
-                store.Save();
-                return Results.Ok(new { message = "Notificación eliminada" });
             }
+
+            return Results.Ok(new { message = "Notificación rechazada y eliminada" });
         });
 
-        group.MapPost("/", (CreateNotificationRequest request, AppDataStore store) =>
+        group.MapDelete("/{id}", async (string id, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
-            {
-                var notification = new Notification
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    UserId = request.UserId,
-                    Type = request.Type,
-                    Title = request.Title,
-                    Message = request.Message,
-                    ProjectId = request.ProjectId,
-                    CreatorId = request.CreatorId,
-                    IsRead = false,
-                    Status = "pending",
-                    CreatedAt = DateTime.UtcNow
-                };
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
 
-                store.Data.Notifications.Add(notification);
-                store.Save();
-                return Results.Created($"/api/notifications/{notification.Id}", notification);
+            using (var deleteCmd = new SqlCommand("DELETE FROM Notifications WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
+            {
+                deleteCmd.Parameters.AddWithValue("@Id", id);
+                var rowsAffected = await deleteCmd.ExecuteNonQueryAsync();
+                
+                if (rowsAffected == 0)
+                {
+                    return Results.NotFound();
+                }
             }
+
+            return Results.Ok(new { message = "Notificación eliminada" });
+        });
+
+        group.MapPost("/", async (CreateNotificationRequest request, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var notificationId = Guid.NewGuid();
+            var createdAt = DateTime.UtcNow;
+
+            using (var insertCmd = new SqlCommand(@"
+                INSERT INTO Notifications (Id, UserId, ProjectId, CreatorId, Title, Message, Type, IsRead, CreatedAt) 
+                VALUES (@Id, @UserId, @ProjectId, @CreatorId, @Title, @Message, @Type, @IsRead, @CreatedAt)", connection))
+            {
+                insertCmd.Parameters.AddWithValue("@Id", notificationId);
+                insertCmd.Parameters.AddWithValue("@UserId", Guid.Parse(request.UserId));
+                insertCmd.Parameters.AddWithValue("@ProjectId", string.IsNullOrWhiteSpace(request.ProjectId) ? DBNull.Value : Guid.Parse(request.ProjectId));
+                insertCmd.Parameters.AddWithValue("@CreatorId", Guid.Parse(request.CreatorId));
+                insertCmd.Parameters.AddWithValue("@Title", request.Title.Trim());
+                insertCmd.Parameters.AddWithValue("@Message", request.Message.Trim());
+                insertCmd.Parameters.AddWithValue("@Type", request.Type);
+                insertCmd.Parameters.AddWithValue("@IsRead", false);
+                insertCmd.Parameters.AddWithValue("@CreatedAt", createdAt);
+                await insertCmd.ExecuteNonQueryAsync();
+            }
+
+            return Results.Created($"/api/notifications/{notificationId}", new { id = notificationId.ToString(), message = "Notificación creada exitosamente" });
         });
     }
 

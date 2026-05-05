@@ -1,4 +1,6 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ScrumSystem.Api.Models;
 
@@ -72,6 +74,7 @@ public class Sprint
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
     public string? Goal { get; set; }
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }
@@ -88,6 +91,9 @@ public class SprintDto : Sprint
     public int CompletedStoryPoints { get; set; }
     public int TotalTasks { get; set; }
     public int CompletedTasks { get; set; }
+    public string? ProjectName { get; set; }
+    public string? ProjectKey { get; set; }
+    public int StoryCount { get; set; }
 }
 
 public class UserStory
@@ -98,7 +104,7 @@ public class UserStory
     public string? AcceptanceCriteria { get; set; }
     public string Key { get; set; } = string.Empty;
     public string Status { get; set; } = "Backlog";
-    public int Priority { get; set; } = 2;
+    public string Priority { get; set; } = "Medium";
     public int? StoryPoints { get; set; }
     public string Type { get; set; } = "Feature";
     public string ProjectId { get; set; } = string.Empty;
@@ -113,6 +119,7 @@ public class UserStoryDto : UserStory
 {
     public int TaskCount { get; set; }
     public int CompletedTaskCount { get; set; }
+    public string? AssigneeName { get; set; }
     public List<TaskItemDto> Tasks { get; set; } = new();
     public List<StoryCommentDto> Comments { get; set; } = new();
     public List<StoryHistoryDto> History { get; set; } = new();
@@ -135,7 +142,7 @@ public class BoardStoryDto
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
     public int? StoryPoints { get; set; }
-    public int Priority { get; set; }
+    public string Priority { get; set; } = "Medium";
     public string Status { get; set; } = string.Empty;
     public string? AssigneeId { get; set; }
     public string? AssigneeName { get; set; }
@@ -164,7 +171,7 @@ public class TaskItem
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
     public int? EstimatedHours { get; set; }
-    public int ActualHours { get; set; }
+    public int? ActualHours { get; set; }
     public string Status { get; set; } = "Todo";
     public int Priority { get; set; } = 1;
     public string? AssignedToId { get; set; }
@@ -334,7 +341,75 @@ public class CreateStoryRequest
     public string? Description { get; set; }
     public string? AcceptanceCriteria { get; set; }
     public int? StoryPoints { get; set; }
-    public int Priority { get; set; }
+    
+    // Accept both int and string for Priority using JsonExtensionData
+    [JsonExtensionData]
+    public Dictionary<string, object>? ExtensionData { get; set; }
+    
+    private int _priorityValue = 2;
+    public int PriorityValue 
+    { 
+        get => _priorityValue;
+        set 
+        {
+            _priorityValue = value;
+        }
+    }
+    
+    // This property will be set by JSON deserialization
+    public object? Priority 
+    { 
+        get => _priorityValue;
+        set 
+        {
+            if (value is JsonElement jsonElement)
+            {
+                if (jsonElement.ValueKind == JsonValueKind.Number)
+                {
+                    _priorityValue = jsonElement.GetInt32();
+                }
+                else if (jsonElement.ValueKind == JsonValueKind.String)
+                {
+                    var stringValue = jsonElement.GetString();
+                    if (int.TryParse(stringValue, out var intValue))
+                    {
+                        _priorityValue = intValue;
+                    }
+                    else
+                    {
+                        // Handle string values like "Low", "Medium", "High"
+                        _priorityValue = stringValue?.ToLowerInvariant() switch
+                        {
+                            "low" => 1,
+                            "high" => 3,
+                            _ => 2
+                        };
+                    }
+                }
+            }
+            else if (value is int intValue)
+            {
+                _priorityValue = intValue;
+            }
+            else if (value is string stringValue)
+            {
+                if (int.TryParse(stringValue, out var stringAsInt))
+                {
+                    _priorityValue = stringAsInt;
+                }
+                else
+                {
+                    _priorityValue = stringValue.ToLowerInvariant() switch
+                    {
+                        "low" => 1,
+                        "high" => 3,
+                        _ => 2
+                    };
+                }
+            }
+        }
+    }
+    
     public string? AssigneeId { get; set; }
     public string? Status { get; set; }
 }
@@ -345,6 +420,8 @@ public class CreateTaskRequest
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
     public int? EstimatedHours { get; set; }
+    public string? Status { get; set; }
+    public string? AssignedToId { get; set; }
     public int Priority { get; set; } = 1;
 }
 
@@ -383,6 +460,12 @@ public class CreateNotificationRequest
     public string Message { get; set; } = string.Empty;
     public string? ProjectId { get; set; }
     public string? CreatorId { get; set; }
+}
+
+public class MoveStoryRequest
+{
+    public string? SprintId { get; set; }
+    public string Status { get; set; } = string.Empty;
 }
 
 public class DashboardStats

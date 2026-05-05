@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using ScrumSystem.Api.Data;
 using ScrumSystem.Api.Models;
 
@@ -9,301 +10,713 @@ public static class StoryRoutes
     {
         var group = app.MapGroup("/api/stories");
 
-        group.MapGet("/", (AppDataStore store) =>
+        group.MapGet("/", async (DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var sql = @"
+                SELECT CAST(us.Id AS NVARCHAR(36)), CAST(us.ProjectId AS NVARCHAR(36)) as ProjectId, CAST(us.SprintId AS NVARCHAR(36)) as SprintId,
+                       us.Title, us.Description, us.AcceptanceCriteria, us.StoryPoints, us.Priority, us.Status, us.[Key],
+                       CAST(us.AssigneeId AS NVARCHAR(36)) as AssigneeId, u.Name as AssigneeName, us.CreatedAt
+                FROM UserStories us
+                LEFT JOIN Users u ON us.AssigneeId = u.Id
+                ORDER BY us.CreatedAt DESC";
+
+            var stories = new List<UserStoryDto>();
+            using (var cmd = new SqlCommand(sql, connection))
             {
-                return Results.Ok(store.Data.UserStories
-                    .OrderByDescending(story => story.CreatedAt)
-                    .Select(story => ToStoryDto(story, store))
-                    .ToList());
-            }
-        });
-
-        group.MapGet("/{id}", (string id, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
-            {
-                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
-                return story is null ? Results.NotFound() : Results.Ok(ToStoryDto(story, store));
-            }
-        });
-
-        group.MapGet("/project/{projectId}", (string projectId, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
-            {
-                return Results.Ok(store.Data.UserStories
-                    .Where(story => story.ProjectId == projectId)
-                    .OrderByDescending(story => story.CreatedAt)
-                    .Select(story => ToStoryDto(story, store))
-                    .ToList());
-            }
-        });
-
-        group.MapGet("/project/{projectId}/backlog", (string projectId, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
-            {
-                return Results.Ok(store.Data.UserStories
-                    .Where(story => story.ProjectId == projectId && string.IsNullOrWhiteSpace(story.SprintId))
-                    .OrderByDescending(story => story.CreatedAt)
-                    .Select(story => ToStoryDto(story, store))
-                    .ToList());
-            }
-        });
-
-        group.MapGet("/project/{projectId}/board", (string projectId, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
-            {
-                var members = store.Data.ProjectMembers
-                    .Where(member => member.ProjectId == projectId)
-                    .Join(store.Data.Users, member => member.UserId, user => user.Id, (member, user) => new ProjectMemberDto
-                    {
-                        Id = user.Id,
-                        Name = user.Name,
-                        Email = user.Email,
-                        Role = member.Role
-                    })
-                    .OrderBy(member => member.Name)
-                    .ToList();
-
-                var activeSprintIds = store.Data.Sprints
-                    .Where(sprint => sprint.ProjectId == projectId && sprint.Status == "Active")
-                    .Select(sprint => sprint.Id)
-                    .ToHashSet();
-
-                var sprintStoryQuery = store.Data.UserStories
-                    .Where(story => story.ProjectId == projectId
-                        && !string.IsNullOrWhiteSpace(story.SprintId)
-                        && activeSprintIds.Contains(story.SprintId!));
-
-                var stories = sprintStoryQuery
-                    .OrderByDescending(story => story.UpdatedAt ?? story.CreatedAt)
-                    .Select(story =>
-                    {
-                        var assignee = store.Data.Users.FirstOrDefault(user => user.Id == story.AssigneeId);
-                        return new BoardStoryDto
-                        {
-                            Id = story.Id,
-                            ProjectId = story.ProjectId,
-                            SprintId = story.SprintId,
-                            Title = story.Title,
-                            Description = story.Description,
-                            StoryPoints = story.StoryPoints,
-                            Priority = story.Priority,
-                            Status = story.Status,
-                            AssigneeId = story.AssigneeId,
-                            AssigneeName = assignee?.Name
-                        };
-                    })
-                    .ToList();
-
-                return Results.Ok(new BoardDataDto
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
                 {
-                    Stories = stories,
-                    Members = members,
-                    HasActiveSprint = activeSprintIds.Count > 0
-                });
+                    var priorityText = reader.IsDBNull(7) ? "Medium" : reader.GetInt32(7) switch { 1 => "Low", 3 => "High", _ => "Medium" };
+                    stories.Add(new UserStoryDto
+                    {
+                        Id = reader.GetString(0),
+                        ProjectId = reader.GetString(1),
+                        SprintId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        Title = reader.GetString(3),
+                        Description = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                        Priority = priorityText,
+                        Status = reader.GetString(8),
+                        Key = reader.IsDBNull(9) ? null : reader.GetString(9),
+                        AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
+                        AssigneeName = reader.IsDBNull(11) ? null : reader.GetString(11),
+                        CreatedAt = reader.GetDateTime(12)
+                    });
+                }
             }
+
+            return Results.Ok(stories);
         });
 
-        group.MapGet("/sprint/{sprintId}", (string sprintId, AppDataStore store) =>
+        group.MapGet("/{id}", async (string id, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var sql = @"
+                SELECT CAST(us.Id AS NVARCHAR(36)), CAST(us.ProjectId AS NVARCHAR(36)) as ProjectId, CAST(us.SprintId AS NVARCHAR(36)) as SprintId,
+                       us.Title, us.Description, us.AcceptanceCriteria, us.StoryPoints, us.Priority, us.Status, us.[Key],
+                       CAST(us.AssigneeId AS NVARCHAR(36)) as AssigneeId, u.Name as AssigneeName, us.CreatedAt
+                FROM UserStories us
+                LEFT JOIN Users u ON us.AssigneeId = u.Id
+                WHERE CAST(us.Id AS NVARCHAR(36)) = @Id";
+
+            using (var cmd = new SqlCommand(sql, connection))
             {
-                return Results.Ok(store.Data.UserStories
-                    .Where(story => story.SprintId == sprintId)
-                    .OrderByDescending(story => story.CreatedAt)
-                    .Select(story => ToStoryDto(story, store))
-                    .ToList());
+                cmd.Parameters.AddWithValue("@Id", id);
+                using var reader = await cmd.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    var storyDto = new UserStoryDto
+                    {
+                        Id = reader.GetString(0),
+                        ProjectId = reader.GetString(1),
+                        SprintId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        Title = reader.GetString(3),
+                        Description = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                        Priority = reader.IsDBNull(7) ? "Medium" : reader.GetString(7),
+                        Status = reader.GetString(8),
+                        Key = reader.IsDBNull(9) ? null : reader.GetString(9),
+                        AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
+                        AssigneeName = reader.IsDBNull(11) ? null : reader.GetString(11),
+                        CreatedAt = reader.GetDateTime(12)
+                    };
+                    return Results.Ok(storyDto);
+                }
             }
+
+            return Results.NotFound();
         });
 
-        group.MapPost("/", (CreateStoryRequest request, AppDataStore store) =>
+        group.MapGet("/project/{projectId}", async (string projectId, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var sql = @"
+                SELECT CAST(us.Id AS NVARCHAR(36)), CAST(us.ProjectId AS NVARCHAR(36)) as ProjectId, CAST(us.SprintId AS NVARCHAR(36)) as SprintId,
+                       us.Title, us.Description, us.AcceptanceCriteria, us.StoryPoints, us.Priority, us.Status, us.[Key],
+                       CAST(us.AssigneeId AS NVARCHAR(36)) as AssigneeId, u.Name as AssigneeName, us.CreatedAt
+                FROM UserStories us
+                LEFT JOIN Users u ON us.AssigneeId = u.Id
+                WHERE CAST(us.ProjectId AS NVARCHAR(36)) = @ProjectId
+                ORDER BY us.CreatedAt DESC";
+
+            var stories = new List<UserStoryDto>();
+            using (var cmd = new SqlCommand(sql, connection))
             {
-                if (store.Data.Projects.All(project => project.Id != request.ProjectId))
+                cmd.Parameters.AddWithValue("@ProjectId", projectId);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    stories.Add(new UserStoryDto
+                    {
+                        Id = reader.GetString(0),
+                        ProjectId = reader.GetString(1),
+                        SprintId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        Title = reader.GetString(3),
+                        Description = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                        Priority = reader.IsDBNull(7) ? "Medium" : reader.GetString(7),
+                        Status = reader.GetString(8),
+                        Key = reader.IsDBNull(9) ? null : reader.GetString(9),
+                        AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
+                        AssigneeName = reader.IsDBNull(11) ? null : reader.GetString(11),
+                        CreatedAt = reader.GetDateTime(12)
+                    });
+                }
+            }
+
+            return Results.Ok(stories);
+        });
+
+        group.MapGet("/project/{projectId}/backlog", async (string projectId, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var sql = @"
+                SELECT CAST(us.Id AS NVARCHAR(36)), CAST(us.ProjectId AS NVARCHAR(36)) as ProjectId, CAST(us.SprintId AS NVARCHAR(36)) as SprintId,
+                       us.Title, us.Description, us.AcceptanceCriteria, us.StoryPoints, us.Priority, us.Status, us.[Key],
+                       CAST(us.AssigneeId AS NVARCHAR(36)) as AssigneeId, u.Name as AssigneeName, us.CreatedAt
+                FROM UserStories us
+                LEFT JOIN Users u ON us.AssigneeId = u.Id
+                WHERE CAST(us.ProjectId AS NVARCHAR(36)) = @ProjectId AND us.SprintId IS NULL
+                ORDER BY us.CreatedAt DESC";
+
+            var stories = new List<UserStoryDto>();
+            using (var cmd = new SqlCommand(sql, connection))
+            {
+                cmd.Parameters.AddWithValue("@ProjectId", projectId);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    stories.Add(new UserStoryDto
+                    {
+                        Id = reader.GetString(0),
+                        ProjectId = reader.GetString(1),
+                        SprintId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        Title = reader.GetString(3),
+                        Description = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                        Priority = reader.IsDBNull(7) ? "Medium" : reader.GetString(7),
+                        Status = reader.GetString(8),
+                        Key = reader.IsDBNull(9) ? null : reader.GetString(9),
+                        AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
+                        AssigneeName = reader.IsDBNull(11) ? null : reader.GetString(11),
+                        CreatedAt = reader.GetDateTime(12)
+                    });
+                }
+            }
+
+            return Results.Ok(stories);
+        });
+
+        group.MapGet("/project/{projectId}/board", async (string projectId, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Get project members
+            var members = new List<ProjectMemberDto>();
+            using (var membersCmd = new SqlCommand(@"
+                SELECT CAST(u.Id AS NVARCHAR(36)), u.Name, u.Email, pm.Role
+                FROM ProjectMembers pm
+                INNER JOIN Users u ON pm.UserId = u.Id
+                WHERE CAST(pm.ProjectId AS NVARCHAR(36)) = @ProjectId
+                ORDER BY u.Name", connection))
+            {
+                membersCmd.Parameters.AddWithValue("@ProjectId", projectId);
+                using var reader = await membersCmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    members.Add(new ProjectMemberDto
+                    {
+                        Id = reader.GetString(0),
+                        Name = reader.GetString(1),
+                        Email = reader.GetString(2),
+                        Role = reader.IsDBNull(3) ? "Developer" : reader.GetString(3)
+                    });
+                }
+            }
+
+            // Check for active sprints
+            var hasActiveSprint = false;
+            using (var sprintCmd = new SqlCommand(@"
+                SELECT COUNT(*) FROM Sprints 
+                WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId AND Status = 'Active'", connection))
+            {
+                sprintCmd.Parameters.AddWithValue("@ProjectId", projectId);
+                hasActiveSprint = (int)await sprintCmd.ExecuteScalarAsync() > 0;
+            }
+
+            // Get stories from active sprints
+            var stories = new List<BoardStoryDto>();
+            var sql = @"
+                SELECT CAST(us.Id AS NVARCHAR(36)), CAST(us.ProjectId AS NVARCHAR(36)), CAST(us.SprintId AS NVARCHAR(36)),
+                       us.Title, us.Description, us.StoryPoints, us.Priority, us.Status,
+                       CAST(us.AssigneeId AS NVARCHAR(36)), u.Name as AssigneeName
+                FROM UserStories us
+                LEFT JOIN Users u ON us.AssigneeId = u.Id
+                INNER JOIN Sprints s ON us.SprintId = s.Id
+                WHERE CAST(us.ProjectId AS NVARCHAR(36)) = @ProjectId 
+                  AND s.Status = 'Active'
+                ORDER BY us.CreatedAt DESC";
+
+            using (var cmd = new SqlCommand(sql, connection))
+            {
+                cmd.Parameters.AddWithValue("@ProjectId", projectId);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    stories.Add(new BoardStoryDto
+                    {
+                        Id = reader.GetString(0),
+                        ProjectId = reader.GetString(1),
+                        SprintId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        Title = reader.GetString(3),
+                        Description = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        StoryPoints = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                        Priority = reader.IsDBNull(6) ? "Medium" : reader.GetString(6),
+                        Status = reader.GetString(7),
+                        AssigneeId = reader.IsDBNull(8) ? null : reader.GetString(8),
+                        AssigneeName = reader.IsDBNull(9) ? null : reader.GetString(9)
+                    });
+                }
+            }
+
+            return Results.Ok(new BoardDataDto
+            {
+                Stories = stories,
+                Members = members,
+                HasActiveSprint = hasActiveSprint
+            });
+        });
+
+        group.MapGet("/sprint/{sprintId}", async (string sprintId, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var sql = @"
+                SELECT CAST(us.Id AS NVARCHAR(36)), CAST(us.ProjectId AS NVARCHAR(36)) as ProjectId, CAST(us.SprintId AS NVARCHAR(36)) as SprintId,
+                       us.Title, us.Description, us.AcceptanceCriteria, us.StoryPoints, us.Priority, us.Status, us.[Key],
+                       CAST(us.AssigneeId AS NVARCHAR(36)) as AssigneeId, u.Name as AssigneeName, us.CreatedAt
+                FROM UserStories us
+                LEFT JOIN Users u ON us.AssigneeId = u.Id
+                WHERE CAST(us.SprintId AS NVARCHAR(36)) = @SprintId
+                ORDER BY us.CreatedAt DESC";
+
+            var stories = new List<UserStoryDto>();
+            using (var cmd = new SqlCommand(sql, connection))
+            {
+                cmd.Parameters.AddWithValue("@SprintId", sprintId);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    stories.Add(new UserStoryDto
+                    {
+                        Id = reader.GetString(0),
+                        ProjectId = reader.GetString(1),
+                        SprintId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        Title = reader.GetString(3),
+                        Description = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                        Priority = reader.IsDBNull(7) ? "Medium" : reader.GetString(7),
+                        Status = reader.GetString(8),
+                        Key = reader.IsDBNull(9) ? null : reader.GetString(9),
+                        AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
+                        AssigneeName = reader.IsDBNull(11) ? null : reader.GetString(11),
+                        CreatedAt = reader.GetDateTime(12)
+                    });
+                }
+            }
+
+            return Results.Ok(stories);
+        });
+
+        group.MapPost("/", async (CreateStoryRequest request, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Verify project exists in SQL
+            string projectKey;
+            using (var checkCmd = new SqlCommand("SELECT [Key] FROM Projects WHERE CAST(Id AS NVARCHAR(36)) = @ProjectId", connection))
+            {
+                checkCmd.Parameters.AddWithValue("@ProjectId", request.ProjectId);
+                var result = await checkCmd.ExecuteScalarAsync();
+                if (result == null || result == DBNull.Value)
                 {
                     return Results.BadRequest("El proyecto no existe");
                 }
-
-                var project = store.Data.Projects.First(project => project.Id == request.ProjectId);
-                var storyNumber = store.Data.UserStories.Count(story => story.ProjectId == request.ProjectId) + 1;
-                var story = new UserStory
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    ProjectId = request.ProjectId,
-                    SprintId = request.SprintId,
-                    Title = request.Title.Trim(),
-                    Description = request.Description?.Trim(),
-                    AcceptanceCriteria = request.AcceptanceCriteria?.Trim(),
-                    StoryPoints = request.StoryPoints,
-                    Priority = request.Priority,
-                    AssigneeId = request.AssigneeId,
-                    Status = string.IsNullOrWhiteSpace(request.Status)
-                        ? (string.IsNullOrWhiteSpace(request.SprintId) ? "Backlog" : "SprintBacklog")
-                        : request.Status,
-                    Key = $"{(project.Key ?? "PROJ").ToUpperInvariant()}-{storyNumber}",
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                store.Data.UserStories.Add(story);
-                store.Save();
-                return Results.Created($"/api/stories/{story.Id}", ToStoryDto(story, store));
+                projectKey = result?.ToString() ?? "PROJ";
             }
+
+            // Get story count for this project
+            int storyNumber;
+            using (var countCmd = new SqlCommand("SELECT COUNT(*) FROM UserStories WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId", connection))
+            {
+                countCmd.Parameters.AddWithValue("@ProjectId", request.ProjectId);
+                storyNumber = (int)await countCmd.ExecuteScalarAsync() + 1;
+            }
+
+            var storyId = Guid.NewGuid();
+            var storyKey = $"{projectKey}-{storyNumber}";
+            var createdAt = DateTime.UtcNow;
+            var status = string.IsNullOrWhiteSpace(request.Status)
+                ? (string.IsNullOrWhiteSpace(request.SprintId) ? "Backlog" : "SprintBacklog")
+                : request.Status;
+            var priorityValue = request.PriorityValue;
+            var priorityText = priorityValue switch
+            {
+                1 => "Low",
+                3 => "High",
+                _ => "Medium"
+            };
+
+            // Insert story
+            var insertSql = @"
+                INSERT INTO UserStories (Id, ProjectId, SprintId, Title, Description, AcceptanceCriteria, StoryPoints, Priority, AssigneeId, Status, [Key], CreatedAt) 
+                VALUES (@Id, @ProjectId, @SprintId, @Title, @Description, @AcceptanceCriteria, @StoryPoints, @Priority, @AssigneeId, @Status, @Key, @CreatedAt)";
+            
+            using (var insertCmd = new SqlCommand(insertSql, connection))
+            {
+                insertCmd.Parameters.AddWithValue("@Id", storyId);
+                insertCmd.Parameters.AddWithValue("@ProjectId", Guid.Parse(request.ProjectId));
+                insertCmd.Parameters.AddWithValue("@SprintId", string.IsNullOrWhiteSpace(request.SprintId) ? DBNull.Value : Guid.Parse(request.SprintId));
+                insertCmd.Parameters.AddWithValue("@Title", request.Title.Trim());
+                insertCmd.Parameters.AddWithValue("@Description", (object?)request.Description?.Trim() ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@AcceptanceCriteria", (object?)request.AcceptanceCriteria?.Trim() ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@StoryPoints", (object?)request.StoryPoints ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@Priority", priorityValue);
+                insertCmd.Parameters.AddWithValue("@AssigneeId", string.IsNullOrWhiteSpace(request.AssigneeId) ? DBNull.Value : Guid.Parse(request.AssigneeId));
+                insertCmd.Parameters.AddWithValue("@Status", status);
+                insertCmd.Parameters.AddWithValue("@Key", storyKey);
+                insertCmd.Parameters.AddWithValue("@CreatedAt", createdAt);
+                await insertCmd.ExecuteNonQueryAsync();
+            }
+
+            var storyDto = new UserStoryDto
+            {
+                Id = storyId.ToString(),
+                ProjectId = request.ProjectId,
+                SprintId = request.SprintId,
+                Title = request.Title.Trim(),
+                Description = request.Description?.Trim(),
+                AcceptanceCriteria = request.AcceptanceCriteria?.Trim(),
+                StoryPoints = request.StoryPoints,
+                Priority = priorityText,
+                AssigneeId = request.AssigneeId,
+                Status = status,
+                Key = storyKey,
+                CreatedAt = createdAt
+            };
+
+            return Results.Created($"/api/stories/{storyId}", storyDto);
         });
 
-        group.MapPut("/{id}", (string id, CreateStoryRequest request, AppDataStore store) =>
+        group.MapPut("/{id}", async (string id, CreateStoryRequest request, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Check if story exists
+            using (var checkCmd = new SqlCommand("SELECT COUNT(*) FROM UserStories WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
-                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
-                if (story is null)
+                checkCmd.Parameters.AddWithValue("@Id", id);
+                var count = await checkCmd.ExecuteScalarAsync();
+                if (count == null || (int)count == 0)
                 {
                     return Results.NotFound();
                 }
-
-                story.Title = request.Title.Trim();
-                story.Description = request.Description?.Trim();
-                story.AcceptanceCriteria = request.AcceptanceCriteria?.Trim();
-                story.StoryPoints = request.StoryPoints;
-                story.Priority = request.Priority;
-                story.ProjectId = string.IsNullOrWhiteSpace(request.ProjectId) ? story.ProjectId : request.ProjectId;
-                story.SprintId = request.SprintId;
-                story.AssigneeId = request.AssigneeId;
-                story.Status = string.IsNullOrWhiteSpace(request.Status) ? story.Status : request.Status;
-                story.UpdatedAt = DateTime.UtcNow;
-                AddStoryHistory(store, story.Id, request.AssigneeId ?? story.AssigneeId ?? story.CreatedById, "StoryUpdated", "Se actualizaron los detalles de la historia.");
-
-                store.Save();
-                return Results.Ok(ToStoryDto(story, store));
             }
+
+            var status = string.IsNullOrWhiteSpace(request.Status)
+                ? (string.IsNullOrWhiteSpace(request.SprintId) ? "Backlog" : "SprintBacklog")
+                : request.Status;
+
+            // Priority as int for database (1=Low, 2=Medium, 3=High)
+            var priorityValue = request.PriorityValue;
+
+            var updateSql = @"
+                UPDATE UserStories 
+                SET Title = @Title, Description = @Description, AcceptanceCriteria = @AcceptanceCriteria,
+                    StoryPoints = @StoryPoints, Priority = @Priority, SprintId = @SprintId, 
+                    AssigneeId = @AssigneeId, Status = @Status
+                WHERE CAST(Id AS NVARCHAR(36)) = @Id";
+
+            using (var updateCmd = new SqlCommand(updateSql, connection))
+            {
+                updateCmd.Parameters.AddWithValue("@Id", id);
+                updateCmd.Parameters.AddWithValue("@Title", request.Title.Trim());
+                updateCmd.Parameters.AddWithValue("@Description", (object?)request.Description?.Trim() ?? DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@AcceptanceCriteria", (object?)request.AcceptanceCriteria?.Trim() ?? DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@StoryPoints", (object?)request.StoryPoints ?? DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@Priority", priorityValue);
+                updateCmd.Parameters.AddWithValue("@SprintId", string.IsNullOrWhiteSpace(request.SprintId) ? DBNull.Value : Guid.Parse(request.SprintId));
+                updateCmd.Parameters.AddWithValue("@AssigneeId", string.IsNullOrWhiteSpace(request.AssigneeId) ? DBNull.Value : Guid.Parse(request.AssigneeId));
+                updateCmd.Parameters.AddWithValue("@Status", status);
+                await updateCmd.ExecuteNonQueryAsync();
+            }
+
+            // Get updated story to return
+            var selectSql = @"
+                SELECT CAST(us.Id AS NVARCHAR(36)), CAST(us.ProjectId AS NVARCHAR(36)) as ProjectId, CAST(us.SprintId AS NVARCHAR(36)) as SprintId,
+                       us.Title, us.Description, us.AcceptanceCriteria, us.StoryPoints, us.Priority, us.Status, us.[Key],
+                       CAST(us.AssigneeId AS NVARCHAR(36)) as AssigneeId, u.Name as AssigneeName, us.CreatedAt
+                FROM UserStories us
+                LEFT JOIN Users u ON us.AssigneeId = u.Id
+                WHERE CAST(us.Id AS NVARCHAR(36)) = @Id";
+
+            using (var selectCmd = new SqlCommand(selectSql, connection))
+            {
+                selectCmd.Parameters.AddWithValue("@Id", id);
+                using var reader = await selectCmd.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    var priorityText = reader.IsDBNull(7) ? "Medium" : reader.GetString(7);
+                    var storyDto = new UserStoryDto
+                    {
+                        Id = reader.GetString(0),
+                        ProjectId = reader.GetString(1),
+                        SprintId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        Title = reader.GetString(3),
+                        Description = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                        Priority = priorityText,
+                        Status = reader.GetString(8),
+                        Key = reader.IsDBNull(9) ? null : reader.GetString(9),
+                        AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
+                        AssigneeName = reader.IsDBNull(11) ? null : reader.GetString(11),
+                        CreatedAt = reader.GetDateTime(12)
+                    };
+                    return Results.Ok(storyDto);
+                }
+            }
+
+            return Results.NotFound();
         });
 
-        group.MapPut("/{id}/status", (string id, UpdateStatusRequest request, AppDataStore store) =>
+        group.MapPut("/{id}/status", async (string id, UpdateStatusRequest request, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var updateSql = "UPDATE UserStories SET Status = @Status WHERE CAST(Id AS NVARCHAR(36)) = @Id";
+            using (var cmd = new SqlCommand(updateSql, connection))
             {
-                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
-                if (story is null)
+                cmd.Parameters.AddWithValue("@Id", id);
+                cmd.Parameters.AddWithValue("@Status", request.Status);
+                var rowsAffected = await cmd.ExecuteNonQueryAsync();
+                
+                if (rowsAffected == 0)
                 {
                     return Results.NotFound();
                 }
-
-                story.Status = request.Status;
-                story.UpdatedAt = DateTime.UtcNow;
-                AddStoryHistory(store, story.Id, story.AssigneeId ?? story.CreatedById, "StatusChanged", $"Estado cambiado a {request.Status}.");
-                store.Save();
-                return Results.Ok(new { message = "Historia actualizada" });
             }
+
+            return Results.Ok(new { message = "Historia actualizada" });
         });
 
-        group.MapPost("/{id}/move-to-sprint", (string id, string sprintId, AppDataStore store) =>
+        group.MapPost("/{id}/move-to-sprint", async (string id, string sprintId, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Check if story exists
+            using (var checkStoryCmd = new SqlCommand("SELECT COUNT(*) FROM UserStories WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
-                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
-                if (story is null)
+                checkStoryCmd.Parameters.AddWithValue("@Id", id);
+                var storyCount = await checkStoryCmd.ExecuteScalarAsync();
+                if (storyCount == null || (int)storyCount == 0)
                 {
                     return Results.NotFound();
                 }
+            }
 
-                if (store.Data.Sprints.All(sprint => sprint.Id != sprintId))
+            // Check if sprint exists
+            using (var checkSprintCmd = new SqlCommand("SELECT COUNT(*) FROM Sprints WHERE CAST(Id AS NVARCHAR(36)) = @SprintId", connection))
+            {
+                checkSprintCmd.Parameters.AddWithValue("@SprintId", sprintId);
+                var sprintCount = await checkSprintCmd.ExecuteScalarAsync();
+                if (sprintCount == null || (int)sprintCount == 0)
                 {
                     return Results.BadRequest("El sprint no existe");
                 }
-
-                story.SprintId = sprintId;
-                story.Status = "Backlog";
-                story.UpdatedAt = DateTime.UtcNow;
-                AddStoryHistory(store, story.Id, story.AssigneeId ?? story.CreatedById, "SprintMove", "Historia movida a sprint.");
-                store.Save();
-
-                return Results.Ok(new { message = "Historia movida al sprint" });
             }
+
+            // Update story to move to sprint
+            using (var updateCmd = new SqlCommand(@"
+                UPDATE UserStories 
+                SET SprintId = @SprintId, Status = @Status
+                WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
+            {
+                updateCmd.Parameters.AddWithValue("@Id", id);
+                updateCmd.Parameters.AddWithValue("@SprintId", Guid.Parse(sprintId));
+                updateCmd.Parameters.AddWithValue("@Status", "Backlog");
+                await updateCmd.ExecuteNonQueryAsync();
+            }
+
+            return Results.Ok(new { message = "Historia movida al sprint" });
         });
 
-        group.MapPost("/{id}/move-to-backlog", (string id, AppDataStore store) =>
+        group.MapPost("/{id}/move-to-backlog", async (string id, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Check if story exists
+            using (var checkCmd = new SqlCommand("SELECT COUNT(*) FROM UserStories WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
-                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
-                if (story is null)
+                checkCmd.Parameters.AddWithValue("@Id", id);
+                var count = await checkCmd.ExecuteScalarAsync();
+                if (count == null || (int)count == 0)
                 {
                     return Results.NotFound();
                 }
+            }
 
-                story.SprintId = null;
-                story.Status = "Backlog";
-                story.UpdatedAt = DateTime.UtcNow;
-                AddStoryHistory(store, story.Id, story.AssigneeId ?? story.CreatedById, "SprintMove", "Historia movida a backlog.");
-                store.Save();
+            // Update story to move to backlog (remove sprint assignment)
+            using (var updateCmd = new SqlCommand(@"
+                UPDATE UserStories 
+                SET SprintId = @SprintId, Status = @Status
+                WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
+            {
+                updateCmd.Parameters.AddWithValue("@Id", id);
+                updateCmd.Parameters.AddWithValue("@SprintId", DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@Status", "Backlog");
+                await updateCmd.ExecuteNonQueryAsync();
+            }
 
-                return Results.Ok(new { message = "Historia movida al backlog" });
+            return Results.Ok(new { message = "Historia movida al backlog" });
+        });
+
+        // Endpoint genérico para mover historias
+        group.MapPost("/{id}/move", async (string id, MoveStoryRequest request, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            using var transaction = connection.BeginTransaction();
+            try
+            {
+                // Verificar que la historia existe
+                using (var checkCmd = new SqlCommand("SELECT COUNT(*) FROM UserStories WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection, transaction))
+                {
+                    checkCmd.Parameters.AddWithValue("@Id", id);
+                    var count = await checkCmd.ExecuteScalarAsync();
+                    if (count == null || (int)count == 0)
+                    {
+                        transaction.Rollback();
+                        return Results.NotFound(new { message = "Historia no encontrada" });
+                    }
+                }
+
+                // Actualizar SprintId y Status según el request
+                string sql;
+                if (request.SprintId == null)
+                {
+                    // Mover al backlog
+                    sql = @"
+                        UPDATE UserStories 
+                        SET SprintId = NULL, Status = @Status, UpdatedAt = @UpdatedAt
+                        WHERE CAST(Id AS NVARCHAR(36)) = @Id";
+                }
+                else
+                {
+                    // Mover a sprint específico
+                    sql = @"
+                        UPDATE UserStories 
+                        SET SprintId = @SprintId, Status = @Status, UpdatedAt = @UpdatedAt
+                        WHERE CAST(Id AS NVARCHAR(36)) = @Id";
+                }
+
+                using (var updateCmd = new SqlCommand(sql, connection, transaction))
+                {
+                    updateCmd.Parameters.AddWithValue("@Id", id);
+                    updateCmd.Parameters.AddWithValue("@Status", request.Status);
+                    updateCmd.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
+                    
+                    if (request.SprintId != null)
+                    {
+                        updateCmd.Parameters.AddWithValue("@SprintId", Guid.Parse(request.SprintId));
+                    }
+                    
+                    await updateCmd.ExecuteNonQueryAsync();
+                }
+
+                transaction.Commit();
+                return Results.Ok(new { message = "Historia movida exitosamente" });
+            }
+            catch (Exception ex)
+            {
+                transaction.Rollback();
+                return Results.Problem($"Error al mover historia: {ex.Message}");
             }
         });
 
-        group.MapPost("/{id}/comments", (string id, CreateStoryCommentRequest request, AppDataStore store) =>
+        group.MapPost("/{id}/comments", async (string id, CreateStoryCommentRequest request, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Check if story exists
+            using (var checkStoryCmd = new SqlCommand("SELECT COUNT(*) FROM UserStories WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
-                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
-                if (story is null)
+                checkStoryCmd.Parameters.AddWithValue("@Id", id);
+                var storyCount = await checkStoryCmd.ExecuteScalarAsync();
+                if (storyCount == null || (int)storyCount == 0)
                 {
                     return Results.NotFound();
                 }
-
-                if (string.IsNullOrWhiteSpace(request.Message))
-                {
-                    return Results.BadRequest("El comentario no puede estar vacio.");
-                }
-
-                var comment = new StoryComment
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    StoryId = id,
-                    UserId = request.UserId,
-                    Message = request.Message.Trim(),
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                store.Data.StoryComments.Add(comment);
-                AddStoryHistory(store, id, request.UserId, "CommentAdded", "Se agrego un comentario.");
-                store.Save();
-
-                var userName = store.Data.Users.FirstOrDefault(user => user.Id == comment.UserId)?.Name ?? "Usuario";
-                return Results.Ok(new StoryCommentDto
-                {
-                    Id = comment.Id,
-                    StoryId = comment.StoryId,
-                    UserId = comment.UserId,
-                    Message = comment.Message,
-                    CreatedAt = comment.CreatedAt,
-                    UserName = userName
-                });
             }
+
+            if (string.IsNullOrWhiteSpace(request.Message))
+            {
+                return Results.BadRequest("El comentario no puede estar vacio.");
+            }
+
+            var commentId = Guid.NewGuid();
+            var createdAt = DateTime.UtcNow;
+
+            // Insert comment
+            using (var insertCmd = new SqlCommand(@"
+                INSERT INTO StoryComments (Id, StoryId, UserId, Message, CreatedAt) 
+                VALUES (@Id, @StoryId, @UserId, @Message, @CreatedAt)", connection))
+            {
+                insertCmd.Parameters.AddWithValue("@Id", commentId);
+                insertCmd.Parameters.AddWithValue("@StoryId", Guid.Parse(id));
+                insertCmd.Parameters.AddWithValue("@UserId", Guid.Parse(request.UserId));
+                insertCmd.Parameters.AddWithValue("@Message", request.Message.Trim());
+                insertCmd.Parameters.AddWithValue("@CreatedAt", createdAt);
+                await insertCmd.ExecuteNonQueryAsync();
+            }
+
+            // Get user name for response
+            string userName = "Usuario";
+            using (var userCmd = new SqlCommand("SELECT Name FROM Users WHERE CAST(Id AS NVARCHAR(36)) = @UserId", connection))
+            {
+                userCmd.Parameters.AddWithValue("@UserId", request.UserId);
+                var result = await userCmd.ExecuteScalarAsync();
+                if (result != null && result != DBNull.Value)
+                {
+                    userName = result.ToString() ?? "Usuario";
+                }
+            }
+
+            return Results.Ok(new StoryCommentDto
+            {
+                Id = commentId.ToString(),
+                StoryId = id,
+                UserId = request.UserId,
+                Message = request.Message.Trim(),
+                CreatedAt = createdAt,
+                UserName = userName
+            });
         });
 
-        group.MapDelete("/{id}", (string id, AppDataStore store) =>
+        group.MapDelete("/{id}", async (string id, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Check if story exists
+            using (var checkCmd = new SqlCommand("SELECT COUNT(*) FROM UserStories WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
-                var story = store.Data.UserStories.FirstOrDefault(item => item.Id == id);
-                if (story is null)
+                checkCmd.Parameters.AddWithValue("@Id", id);
+                var count = await checkCmd.ExecuteScalarAsync();
+                if (count == null || (int)count == 0)
                 {
                     return Results.NotFound();
                 }
-
-                store.Data.UserStories.Remove(story);
-                store.Data.Tasks.RemoveAll(task => task.StoryId == id);
-                store.Data.StoryComments.RemoveAll(comment => comment.StoryId == id);
-                store.Data.StoryHistory.RemoveAll(item => item.StoryId == id);
-                store.Save();
-                return Results.Ok(new { message = "Historia eliminada" });
             }
+
+            // Delete related tasks, comments, and history first
+            using (var deleteTasksCmd = new SqlCommand("DELETE FROM Tasks WHERE CAST(StoryId AS NVARCHAR(36)) = @StoryId", connection))
+            {
+                deleteTasksCmd.Parameters.AddWithValue("@StoryId", id);
+                await deleteTasksCmd.ExecuteNonQueryAsync();
+            }
+
+            // Delete the story
+            using (var deleteStoryCmd = new SqlCommand("DELETE FROM UserStories WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
+            {
+                deleteStoryCmd.Parameters.AddWithValue("@Id", id);
+                await deleteStoryCmd.ExecuteNonQueryAsync();
+            }
+
+            return Results.Ok(new { message = "Historia eliminada" });
         });
     }
 

@@ -6878,6 +6878,12 @@ padding: 0;
     border: 2px dashed var(--border-color);
 }
 
+.assignee-avatar.assigned {
+    background: linear-gradient(135deg, var(--primary-purple) 0%, var(--primary-cyan) 100%);
+    color: white;
+    border: 2px solid transparent;
+}
+
 @media (max-width: 1200px) {
     .kanban-board {
         grid-template-columns: repeat(2, 1fr);

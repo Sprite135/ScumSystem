@@ -459,6 +459,32 @@
         </div>
     </div>
 
+    <!-- Delete Story Confirmation Modal -->
+    <div id="delete-story-modal" class="modal">
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h3><i class="fas fa-exclamation-triangle" style="color: #e74c3c;"></i> Eliminar Historia</h3>
+            </div>
+            <div class="modal-body">
+                <p>¿Estás seguro de que deseas eliminar esta historia?</p>
+                <div class="alert alert-warning" style="background: #fff3cd; border: 1px solid #ffc107; padding: 12px; border-radius: 6px; margin: 12px 0;">
+                    <strong>Advertencia:</strong> Esta acción eliminará permanentemente:
+                    <ul style="margin: 8px 0; padding-left: 20px;">
+                        <li>La historia de usuario</li>
+                        <li>Todas las subtareas asociadas</li>
+                        <li>Todos los comentarios</li>
+                        <li>Historial de actividad</li>
+                    </ul>
+                    <strong>Esta acción no se puede deshacer.</strong>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="hideModal('delete-story-modal')">Cancelar</button>
+                <button type="button" class="btn btn-danger" id="confirm-delete-story-btn">Eliminar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Leave Project Modal -->
     <div id="leave-modal" class="modal">
         <div class="modal-content">
@@ -584,7 +610,70 @@
         </div>
     </div>
 
-    <!-- Toast -->
+    <!-- Complete Sprint Modal -->
+    <div id="complete-sprint-modal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #00a8cc 0%, #0077b6 100%); padding: 0;">
+                <div style="padding: 40px 20px; text-align: center; width: 100%;">
+                    <div style="font-size: 60px; margin-bottom: 10px;">🏆</div>
+                </div>
+            </div>
+            <div class="modal-body" style="padding: 24px;">
+                <h3 style="margin-bottom: 16px; font-size: 20px;">Completar <span id="complete-sprint-name">SPRINT</span></h3>
+                
+                <p class="modal-subtitle" style="margin-bottom: 16px; color: var(--text-muted);">
+                    Este sprint contiene <strong id="complete-sprint-completed">0</strong> actividad completada y <strong id="complete-sprint-open">0</strong> actividad abierta.
+                </p>
+                
+                <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                    <ul style="margin: 0; padding-left: 20px; color: var(--text-secondary);">
+                        <li style="margin-bottom: 8px;">Las actividades completadas incluyen todo lo que hay en la última columna del tablero, <span style="color: var(--accent); font-weight: 500;">Finalizado</span>.</li>
+                        <li>Las actividades abiertas incluyen todo lo que hay en cualquier otra columna del tablero. Muévelas a un nuevo sprint o al backlog.</li>
+                    </ul>
+                </div>
+                
+                <div class="form-group">
+                    <label for="complete-sprint-destination" style="font-weight: 500; margin-bottom: 8px; display: block;">Mover actividades abiertas a</label>
+                    <select id="complete-sprint-destination" class="form-control" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+                        <option value="backlog">Backlog</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-top: 1px solid var(--border-color); padding: 16px 24px; display: flex; justify-content: flex-end; gap: 12px;">
+                <button type="button" class="btn btn-secondary" onclick="hideModal('complete-sprint-modal')" style="padding: 10px 20px; border-radius: 6px; border: none; background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer;">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="confirmCompleteSprint()" style="padding: 10px 20px; border-radius: 6px; border: none; background: var(--accent); color: white; cursor: pointer; font-weight: 500;">Terminar sprint</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Kanban Board Containers (hidden by default) -->
+<div id="kanban-board" style="display: none;">
+    <div class="kanban-board-container">
+        <div id="column-backlog" class="kanban-column">
+            <div class="kanban-column-header">
+                <h3>Backlog</h3>
+                <span class="column-count">0</span>
+            </div>
+            <div class="kanban-cards"></div>
+        </div>
+        <div id="column-in-progress" class="kanban-column">
+            <div class="kanban-column-header">
+                <h3>In Progress</h3>
+                <span class="column-count">0</span>
+            </div>
+            <div class="kanban-cards"></div>
+        </div>
+        <div id="column-done" class="kanban-column">
+            <div class="kanban-column-header">
+                <h3>Done</h3>
+                <span class="column-count">0</span>
+            </div>
+            <div class="kanban-cards"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
     <div id="toast" class="toast">
         <div class="toast-content">
             <span id="toast-message"></span>

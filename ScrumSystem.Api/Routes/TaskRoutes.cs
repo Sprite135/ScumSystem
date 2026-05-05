@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using ScrumSystem.Api.Data;
 using ScrumSystem.Api.Models;
 
@@ -9,145 +10,287 @@ public static class TaskRoutes
     {
         var group = app.MapGroup("/api/tasks");
 
-        group.MapPost("/", (CreateTaskRequest request, AppDataStore store) =>
+        group.MapPost("/", async (CreateTaskRequest request, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Verify story exists
+            using (var checkCmd = new SqlCommand("SELECT COUNT(*) FROM UserStories WHERE CAST(Id AS NVARCHAR(36)) = @StoryId", connection))
             {
-                if (store.Data.UserStories.All(story => story.Id != request.StoryId))
+                checkCmd.Parameters.AddWithValue("@StoryId", request.StoryId);
+                var count = (int)await checkCmd.ExecuteScalarAsync();
+                if (count == 0)
                 {
-                    return Results.BadRequest("La historia no existe");
+                    return Results.BadRequest("Historia no encontrada");
                 }
+            }
 
-                var task = new TaskItem
+            var taskId = Guid.NewGuid();
+            var createdAt = DateTime.UtcNow;
+            var status = request.Status ?? "Todo";
+
+            // Insert task
+            var insertSql = @"
+                INSERT INTO Tasks (Id, StoryId, Title, Description, EstimatedHours, ActualHours, Status, AssignedToId, CreatedAt) 
+                VALUES (@Id, @StoryId, @Title, @Description, @EstimatedHours, @ActualHours, @Status, @AssignedToId, @CreatedAt)";
+
+            using (var insertCmd = new SqlCommand(insertSql, connection))
+            {
+                insertCmd.Parameters.AddWithValue("@Id", taskId);
+                insertCmd.Parameters.AddWithValue("@StoryId", Guid.Parse(request.StoryId));
+                insertCmd.Parameters.AddWithValue("@Title", request.Title.Trim());
+                insertCmd.Parameters.AddWithValue("@Description", (object?)request.Description?.Trim() ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@EstimatedHours", (object?)request.EstimatedHours ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@ActualHours", 0);
+                insertCmd.Parameters.AddWithValue("@Status", status);
+                insertCmd.Parameters.AddWithValue("@AssignedToId", (object?)(request.AssignedToId != null ? Guid.Parse(request.AssignedToId) : null) ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@CreatedAt", createdAt);
+                await insertCmd.ExecuteNonQueryAsync();
+            }
+
+            // Add story history
+            await AddStoryHistoryAsync(connection, request.StoryId, request.AssignedToId, "SubtaskCreated", $"Subtarea creada: {request.Title.Trim()}");
+
+            var taskDto = await GetTaskByIdAsync(connection, taskId.ToString());
+            return Results.Created($"/api/tasks/{taskId}", taskDto);
+        });
+
+        group.MapGet("/story/{storyId}", async (string storyId, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var sql = @"
+                SELECT t.Id, CAST(t.StoryId AS NVARCHAR(36)), t.Title, t.Description, t.EstimatedHours, t.ActualHours, 
+                       t.Status, CAST(t.AssignedToId AS NVARCHAR(36)), u.Name as AssignedToName, t.CreatedAt
+                FROM Tasks t
+                LEFT JOIN Users u ON t.AssignedToId = u.Id
+                WHERE CAST(t.StoryId AS NVARCHAR(36)) = @StoryId
+                ORDER BY t.CreatedAt";
+
+            var tasks = new List<TaskItemDto>();
+            using (var cmd = new SqlCommand(sql, connection))
+            {
+                cmd.Parameters.AddWithValue("@StoryId", storyId);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
                 {
-                    Id = Guid.NewGuid().ToString(),
-                    StoryId = request.StoryId,
-                    Title = request.Title.Trim(),
-                    Description = request.Description?.Trim(),
-                    EstimatedHours = request.EstimatedHours,
-                    Status = "Todo",
-                    Priority = request.Priority,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                store.Data.Tasks.Add(task);
-                AddStoryHistory(store, task.StoryId, task.AssignedToId, "SubtaskCreated", $"Subtarea creada: {task.Title}");
-                store.Save();
-                return Results.Created($"/api/tasks/{task.Id}", ToTaskDto(task, store));
+                    tasks.Add(new TaskItemDto
+                    {
+                        Id = reader.GetGuid(0).ToString(),
+                        StoryId = reader.GetString(1),
+                        Title = reader.GetString(2),
+                        Description = reader.IsDBNull(3) ? null : reader.GetString(3),
+                        EstimatedHours = reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                        ActualHours = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                        Status = reader.GetString(6),
+                        AssignedToId = reader.IsDBNull(7) ? null : reader.GetString(7),
+                        AssignedToName = reader.IsDBNull(8) ? null : reader.GetString(8),
+                        CreatedAt = reader.GetDateTime(9)
+                    });
+                }
             }
+
+            return Results.Ok(tasks);
         });
 
-        group.MapGet("/story/{storyId}", (string storyId, AppDataStore store) =>
+        group.MapPatch("/{id}/status", async (string id, UpdateTaskStatusRequest request, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Get current task
+            var currentTask = await GetTaskByIdAsync(connection, id);
+            if (currentTask is null)
             {
-                return Results.Ok(store.Data.Tasks
-                    .Where(task => task.StoryId == storyId)
-                    .OrderBy(task => task.CreatedAt)
-                    .Select(task => ToTaskDto(task, store))
-                    .ToList());
+                return Results.NotFound();
             }
+
+            var completedAt = request.Status == "Done" ? DateTime.UtcNow : (DateTime?)null;
+
+            // Update task status
+            var updateSql = @"
+                UPDATE Tasks 
+                SET Status = @Status, ActualHours = @ActualHours, CompletedAt = @CompletedAt
+                WHERE CAST(Id AS NVARCHAR(36)) = @Id";
+
+            using (var updateCmd = new SqlCommand(updateSql, connection))
+            {
+                updateCmd.Parameters.AddWithValue("@Id", id);
+                updateCmd.Parameters.AddWithValue("@Status", request.Status);
+                updateCmd.Parameters.AddWithValue("@ActualHours", (object?)request.ActualHours ?? DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@CompletedAt", (object?)completedAt ?? DBNull.Value);
+                await updateCmd.ExecuteNonQueryAsync();
+            }
+
+            await AddStoryHistoryAsync(connection, currentTask.StoryId, currentTask.AssignedToId, "SubtaskStatus", $"Subtarea '{currentTask.Title}' cambio a {request.Status}.");
+            return Results.Ok(new { message = "Status updated" });
         });
 
-        group.MapPatch("/{id}/status", (string id, UpdateTaskStatusRequest request, AppDataStore store) =>
+        group.MapPatch("/{id}/assign", async (string id, string assignedTo, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Get current task
+            var currentTask = await GetTaskByIdAsync(connection, id);
+            if (currentTask is null)
             {
-                var task = store.Data.Tasks.FirstOrDefault(item => item.Id == id);
-                if (task is null)
+                return Results.NotFound();
+            }
+
+            // Update task assignment
+            var updateSql = @"
+                UPDATE Tasks 
+                SET AssignedToId = @AssignedToId
+                WHERE CAST(Id AS NVARCHAR(36)) = @Id";
+
+            using (var updateCmd = new SqlCommand(updateSql, connection))
+            {
+                updateCmd.Parameters.AddWithValue("@Id", id);
+                updateCmd.Parameters.AddWithValue("@AssignedToId", (object?)(assignedTo != null ? Guid.Parse(assignedTo) : null) ?? DBNull.Value);
+                await updateCmd.ExecuteNonQueryAsync();
+            }
+
+            await AddStoryHistoryAsync(connection, currentTask.StoryId, assignedTo, "SubtaskAssigned", $"Subtarea '{currentTask.Title}' asignada.");
+            
+            var updatedTask = await GetTaskByIdAsync(connection, id);
+            return Results.Ok(updatedTask);
+        });
+
+        group.MapGet("/board/{sprintId}", async (string sprintId, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var sql = @"
+                SELECT t.Id, CAST(t.StoryId AS NVARCHAR(36)) as StoryId, t.Title, t.Description, 
+                       t.EstimatedHours, t.ActualHours, t.Status, t.Priority, 
+                       CAST(t.AssignedToId AS NVARCHAR(36)) as AssignedToId, u.Name as AssignedToName,
+                       us.Title as StoryTitle, t.CreatedAt
+                FROM Tasks t
+                LEFT JOIN Users u ON t.AssignedToId = u.Id
+                LEFT JOIN UserStories us ON t.StoryId = us.Id
+                WHERE CAST(us.SprintId AS NVARCHAR(36)) = @SprintId
+                ORDER BY t.CreatedAt DESC";
+
+            var tasks = new List<TaskItemDto>();
+            using (var cmd = new SqlCommand(sql, connection))
+            {
+                cmd.Parameters.AddWithValue("@SprintId", sprintId);
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    tasks.Add(new TaskItemDto
+                    {
+                        Id = reader.GetString(0),
+                        StoryId = reader.GetString(1),
+                        Title = reader.GetString(2),
+                        Description = reader.IsDBNull(3) ? null : reader.GetString(3),
+                        EstimatedHours = reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                        ActualHours = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                        Status = reader.GetString(6),
+                        Priority = reader.GetInt32(7),
+                        AssignedToId = reader.IsDBNull(8) ? null : reader.GetString(8),
+                        AssignedToName = reader.IsDBNull(9) ? null : reader.GetString(9),
+                        StoryTitle = reader.GetString(10),
+                        CreatedAt = reader.GetDateTime(11)
+                    });
+                }
+            }
+
+            var board = new KanbanBoardDto
+            {
+                Todo = tasks.Where(task => task.Status == "Todo").ToList(),
+                InProgress = tasks.Where(task => task.Status == "InProgress").ToList(),
+                Done = tasks.Where(task => task.Status == "Done").ToList(),
+                Blocked = tasks.Where(task => task.Status == "Blocked").ToList()
+            };
+
+            return Results.Ok(board);
+        });
+
+        group.MapGet("/{id}", async (string id, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var taskDto = await GetTaskByIdAsync(connection, id);
+            return taskDto is null ? Results.NotFound() : Results.Ok(taskDto);
+        });
+
+        group.MapPut("/{id}", async (string id, CreateTaskRequest request, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Check if task exists
+            using (var checkCmd = new SqlCommand("SELECT COUNT(*) FROM Tasks WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
+            {
+                checkCmd.Parameters.AddWithValue("@Id", id);
+                var count = await checkCmd.ExecuteScalarAsync();
+                if (count == null || (int)count == 0)
                 {
                     return Results.NotFound();
                 }
-
-                task.Status = request.Status;
-                task.ActualHours = request.ActualHours;
-                task.CompletedAt = request.Status == "Done" ? DateTime.UtcNow : null;
-                AddStoryHistory(store, task.StoryId, task.AssignedToId, "SubtaskStatus", $"Subtarea '{task.Title}' cambio a {request.Status}.");
-                store.Save();
-                return Results.Ok(new { message = "Status updated" });
             }
+
+            // Update task
+            using (var updateCmd = new SqlCommand(@"
+                UPDATE Tasks 
+                SET StoryId = @StoryId, Title = @Title, Description = @Description, 
+                    EstimatedHours = @EstimatedHours, Priority = @Priority, UpdatedAt = @UpdatedAt
+                WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
+            {
+                updateCmd.Parameters.AddWithValue("@Id", Guid.Parse(id));
+                updateCmd.Parameters.AddWithValue("@StoryId", Guid.Parse(request.StoryId));
+                updateCmd.Parameters.AddWithValue("@Title", request.Title.Trim());
+                updateCmd.Parameters.AddWithValue("@Description", (object?)request.Description?.Trim() ?? DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@EstimatedHours", (object?)request.EstimatedHours ?? DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@Priority", request.Priority);
+                updateCmd.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
+                await updateCmd.ExecuteNonQueryAsync();
+            }
+
+            await AddStoryHistoryAsync(connection, request.StoryId, null, "SubtaskUpdated", $"Subtarea actualizada: {request.Title}");
+            
+            return Results.Ok(new { message = "Tarea actualizada exitosamente" });
         });
 
-        group.MapPatch("/{id}/assign", (string id, string assignedTo, AppDataStore store) =>
+        group.MapDelete("/{id}", async (string id, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Get task info for history before deleting
+            string taskTitle = "";
+            string storyId = "";
+            using (var getTaskCmd = new SqlCommand("SELECT Title, CAST(StoryId AS NVARCHAR(36)) FROM Tasks WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
-                var task = store.Data.Tasks.FirstOrDefault(item => item.Id == id);
-                if (task is null)
+                getTaskCmd.Parameters.AddWithValue("@Id", id);
+                using var reader = await getTaskCmd.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    taskTitle = reader.GetString(0);
+                    storyId = reader.GetString(1);
+                }
+                else
                 {
                     return Results.NotFound();
                 }
-
-                task.AssignedToId = string.IsNullOrWhiteSpace(assignedTo) ? null : assignedTo;
-                AddStoryHistory(store, task.StoryId, task.AssignedToId, "SubtaskAssignee", $"Asignacion actualizada para subtarea '{task.Title}'.");
-                store.Save();
-                return Results.Ok(new { message = "Task assigned" });
             }
-        });
 
-        group.MapGet("/board/{sprintId}", (string sprintId, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
+            // Delete the task
+            using (var deleteCmd = new SqlCommand("DELETE FROM Tasks WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
-                var storyIds = store.Data.UserStories.Where(story => story.SprintId == sprintId).Select(story => story.Id).ToHashSet();
-                var tasks = store.Data.Tasks.Where(task => storyIds.Contains(task.StoryId)).Select(task => ToTaskDto(task, store)).ToList();
-                var board = new KanbanBoardDto
-                {
-                    Todo = tasks.Where(task => task.Status == "Todo").ToList(),
-                    InProgress = tasks.Where(task => task.Status == "InProgress").ToList(),
-                    Done = tasks.Where(task => task.Status == "Done").ToList(),
-                    Blocked = tasks.Where(task => task.Status == "Blocked").ToList()
-                };
-
-                return Results.Ok(board);
+                deleteCmd.Parameters.AddWithValue("@Id", id);
+                await deleteCmd.ExecuteNonQueryAsync();
             }
-        });
 
-        group.MapGet("/{id}", (string id, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
-            {
-                var task = store.Data.Tasks.FirstOrDefault(item => item.Id == id);
-                return task is null ? Results.NotFound() : Results.Ok(ToTaskDto(task, store));
-            }
-        });
-
-        group.MapPut("/{id}", (string id, CreateTaskRequest request, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
-            {
-                var task = store.Data.Tasks.FirstOrDefault(item => item.Id == id);
-                if (task is null)
-                {
-                    return Results.NotFound();
-                }
-
-                task.StoryId = request.StoryId;
-                task.Title = request.Title.Trim();
-                task.Description = request.Description?.Trim();
-                task.EstimatedHours = request.EstimatedHours;
-                task.Priority = request.Priority;
-                AddStoryHistory(store, task.StoryId, task.AssignedToId, "SubtaskUpdated", $"Subtarea actualizada: {task.Title}");
-                store.Save();
-                return Results.Ok(new { message = "Tarea actualizada exitosamente" });
-            }
-        });
-
-        group.MapDelete("/{id}", (string id, AppDataStore store) =>
-        {
-            lock (store.SyncRoot)
-            {
-                var task = store.Data.Tasks.FirstOrDefault(item => item.Id == id);
-                if (task is null)
-                {
-                    return Results.NotFound();
-                }
-
-                AddStoryHistory(store, task.StoryId, task.AssignedToId, "SubtaskDeleted", $"Subtarea eliminada: {task.Title}");
-                store.Data.Tasks.Remove(task);
-                store.Save();
-                return Results.Ok(new { message = "Tarea eliminada exitosamente" });
-            }
+            await AddStoryHistoryAsync(connection, storyId, null, "SubtaskDeleted", $"Subtarea eliminada: {taskTitle}");
+            
+            return Results.Ok(new { message = "Tarea eliminada exitosamente" });
         });
     }
 
@@ -184,6 +327,58 @@ public static class TaskRoutes
             Message = message,
             CreatedAt = DateTime.UtcNow
         });
+    }
+
+    private static async Task<TaskItemDto?> GetTaskByIdAsync(SqlConnection connection, string taskId)
+    {
+        var sql = @"
+            SELECT t.Id, CAST(t.StoryId AS NVARCHAR(36)), t.Title, t.Description, t.EstimatedHours, t.ActualHours, 
+                   t.Status, CAST(t.AssignedToId AS NVARCHAR(36)), u.Name as AssignedToName, t.CreatedAt
+            FROM Tasks t
+            LEFT JOIN Users u ON t.AssignedToId = u.Id
+            WHERE CAST(t.Id AS NVARCHAR(36)) = @TaskId";
+
+        using (var cmd = new SqlCommand(sql, connection))
+        {
+            cmd.Parameters.AddWithValue("@TaskId", taskId);
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                return new TaskItemDto
+                {
+                    Id = reader.GetGuid(0).ToString(),
+                    StoryId = reader.GetString(1),
+                    Title = reader.GetString(2),
+                    Description = reader.IsDBNull(3) ? null : reader.GetString(3),
+                    EstimatedHours = reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                    ActualHours = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                    Status = reader.GetString(6),
+                    AssignedToId = reader.IsDBNull(7) ? null : reader.GetString(7),
+                    AssignedToName = reader.IsDBNull(8) ? null : reader.GetString(8),
+                    CreatedAt = reader.GetDateTime(9)
+                };
+            }
+        }
+        return null;
+    }
+
+    private static async Task AddStoryHistoryAsync(SqlConnection connection, string storyId, string? userId, string eventType, string message)
+    {
+        var historyId = Guid.NewGuid();
+        var sql = @"
+            INSERT INTO StoryHistories (Id, StoryId, UserId, EventType, Message, CreatedAt)
+            VALUES (@Id, @StoryId, @UserId, @EventType, @Message, @CreatedAt)";
+
+        using (var cmd = new SqlCommand(sql, connection))
+        {
+            cmd.Parameters.AddWithValue("@Id", historyId);
+            cmd.Parameters.AddWithValue("@StoryId", Guid.Parse(storyId));
+            cmd.Parameters.AddWithValue("@UserId", (object?)(userId != null ? Guid.Parse(userId) : null) ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@EventType", eventType);
+            cmd.Parameters.AddWithValue("@Message", message);
+            cmd.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
+            await cmd.ExecuteNonQueryAsync();
+        }
     }
 }
 

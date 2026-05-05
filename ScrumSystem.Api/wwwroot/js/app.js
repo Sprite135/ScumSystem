@@ -4,9 +4,12 @@ const API_URL = '';
 // Global State
 let currentUser = null;
 let projects = [];
+let sprints = [];
+let stories = [];
 let burndownChart = null;
 let membersToAdd = [];
 let nextSprintNumber = 2; // Sprint 1 already exists, next will be Sprint 2
+let storyToDelete = null; // Stores story ID pending deletion
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
@@ -350,7 +353,7 @@ function renderSidebarProjects() {
         
         // Check if current user is creator
         const currentUserId = currentUser?.id?.toString().toLowerCase();
-        const projectOwnerId = p.productOwnerId?.toString().toLowerCase();
+        const projectOwnerId = p.creatorId?.toString().toLowerCase();
         const isCreator = currentUserId && projectOwnerId && currentUserId === projectOwnerId;
         
         return `
@@ -592,9 +595,8 @@ async function loadProjectBoard() {
     }
 }
 
-function loadProjectMembers() {
+async function loadProjectMembers() {
     console.log('loadProjectMembers called, selectedProjectId:', selectedProjectId);
-    console.log('Projects array:', projects);
     
     if (!selectedProjectId) {
         console.log('No selectedProjectId');
@@ -603,36 +605,35 @@ function loadProjectMembers() {
     
     // Get project from projects array
     const project = projects.find(p => p.id === selectedProjectId);
-    console.log('Found project:', project);
-    
     if (!project) {
         console.log('Project not found');
         return;
     }
     
-    if (!project.members) {
-        console.log('Project has no members');
-        return;
+    try {
+        // Load members from API
+        const members = await apiRequest(`/api/projects/${selectedProjectId}/members`);
+        project.members = members;
+        console.log('Loaded members:', members);
+    } catch (error) {
+        console.error('Error loading members:', error);
+        project.members = [];
     }
-    
-    console.log('Project members:', project.members);
     
     const membersContainer = document.getElementById('project-members-list');
     if (!membersContainer) {
         console.log('Members container not found');
         return;
     }
-    
-    // Show member avatars (max 2)
+
     const membersToShow = project.members.slice(0, 2);
     const remainingCount = project.members.length - 2;
     
-    console.log('Members to show:', membersToShow);
-    console.log('Remaining count:', remainingCount);
-    
-    let avatarsHtml = membersToShow.map(member => {
-        const initials = member.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
-        return `<div class="member-avatar" title="${escapeHtml(member.name)} (${member.role})">${initials}</div>`;
+    // Generate avatar HTML for up to 2 members with consistent colors
+    let avatarsHtml = membersToShow.map((m, i) => {
+        const initials = m.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+        const userColor = getUserColor(m.id);
+        return `<div class="member-avatar" title="${escapeHtml(m.name)}" style="z-index: ${10-i}; margin-left: ${i > 0 ? '-8px' : '0'}; background: ${userColor}; color: white;">${initials}</div>`;
     }).join('');
     
     if (remainingCount > 0) {
@@ -641,364 +642,6 @@ function loadProjectMembers() {
     
     console.log('Setting avatars HTML:', avatarsHtml);
     membersContainer.innerHTML = avatarsHtml;
-}
-
-function searchProjectStories(event) {
-    const searchTerm = event.target.value.toLowerCase();
-    
-    if (projectSubTab === 'backlog') {
-        // Filter backlog stories
-        const storyItems = document.querySelectorAll('#backlog-list .story-item');
-        storyItems.forEach(item => {
-            const title = item.querySelector('.story-title')?.textContent.toLowerCase() || '';
-            const description = item.querySelector('.story-description')?.textContent.toLowerCase() || '';
-            const matches = title.includes(searchTerm) || description.includes(searchTerm);
-            item.style.display = matches ? '' : 'none';
-        });
-    } else if (projectSubTab === 'board') {
-        // Filter kanban cards
-        const cards = document.querySelectorAll('.kanban-card');
-        cards.forEach(card => {
-            const title = card.querySelector('.kanban-card-title')?.textContent.toLowerCase() || '';
-            const key = card.querySelector('.kanban-card-key')?.textContent.toLowerCase() || '';
-            const matches = title.includes(searchTerm) || key.includes(searchTerm);
-            card.style.display = matches ? '' : 'none';
-        });
-    }
-}
-
-function toggleFilterMenu() {
-    const menu = document.getElementById('filter-menu');
-    if (menu) {
-        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-    }
-}
-
-function applyFilter(filterType) {
-    // Close filter menu
-    document.getElementById('filter-menu').style.display = 'none';
-    
-    // Apply filter logic based on type
-    console.log('Applying filter:', filterType);
-    
-    // For now, just show a toast. Later we can implement actual filtering
-    const filterNames = {
-        'main': 'Principal',
-        'sprint': 'Sprint',
-        'assignee': 'Persona asignada',
-        'activity': 'Tipo de actividad',
-        'labels': 'Etiquetas',
-        'status': 'Estado',
-        'priority': 'Prioridad'
-    };
-    
-    showToast(`Filtro aplicado: ${filterNames[filterType]}`);
-    
-    // Close filter menu
-    document.getElementById('filter-menu').style.display = 'none';
-}
-
-// Close filter menu when clicking outside
-document.addEventListener('click', (e) => {
-    if (!e.target.closest('.project-filter')) {
-        const filterMenu = document.getElementById('filter-menu');
-        if (filterMenu) filterMenu.style.display = 'none';
-    }
-});
-
-// ==================== COLUMN DRAG AND DROP ====================
-let draggedColumn = null;
-
-function startDragColumn(event, headerElement) {
-    // Don't start drag if clicking on delete button
-    if (event.target.closest('.column-delete-btn')) {
-        return;
-    }
-    
-    const column = headerElement.closest('.kanban-column');
-    if (!column) return;
-    
-    draggedColumn = column;
-    column.style.opacity = '0.5';
-    
-    document.addEventListener('mousemove', handleColumnDrag);
-    document.addEventListener('mouseup', handleColumnDrop);
-    
-    event.preventDefault();
-}
-
-function handleColumnDrag(event) {
-    if (!draggedColumn) return;
-    
-    const board = document.getElementById('kanban-board');
-    const columns = board.querySelectorAll('.kanban-column');
-    
-    columns.forEach(column => {
-        if (column === draggedColumn) return;
-        
-        const rect = column.getBoundingClientRect();
-        const midpoint = rect.left + rect.width / 2;
-        
-        if (event.clientX < midpoint) {
-            column.style.borderLeft = '3px solid var(--primary-purple)';
-            column.style.borderRight = '';
-        } else {
-            column.style.borderRight = '3px solid var(--primary-purple)';
-            column.style.borderLeft = '';
-        }
-    });
-}
-
-function handleColumnDrop(event) {
-    if (!draggedColumn) return;
-    
-    const board = document.getElementById('kanban-board');
-    const columns = board.querySelectorAll('.kanban-column');
-    
-    columns.forEach(column => {
-        column.style.borderLeft = '';
-        column.style.borderRight = '';
-    });
-    
-    // Find the column to drop before/after
-    let dropTarget = null;
-    let dropPosition = 'before';
-    
-    columns.forEach(column => {
-        if (column === draggedColumn) return;
-        
-        const rect = column.getBoundingClientRect();
-        const midpoint = rect.left + rect.width / 2;
-        
-        if (event.clientX >= rect.left && event.clientX <= rect.right) {
-            dropTarget = column;
-            dropPosition = event.clientX < midpoint ? 'before' : 'after';
-        }
-    });
-    
-    if (dropTarget) {
-        if (dropPosition === 'before') {
-            board.insertBefore(draggedColumn, dropTarget);
-        } else {
-            board.insertBefore(draggedColumn, dropTarget.nextSibling);
-        }
-    }
-    
-    draggedColumn.style.opacity = '';
-    draggedColumn = null;
-    
-    document.removeEventListener('mousemove', handleColumnDrag);
-    document.removeEventListener('mouseup', handleColumnDrop);
-}
-
-function showAddColumnModal() {
-    const columnName = prompt('Nombre de la nueva columna:');
-    if (!columnName || columnName.trim() === '') return;
-    
-    addNewColumn(columnName.trim());
-}
-
-function addNewColumn(name) {
-    const board = document.getElementById('kanban-board');
-    const addBtn = board.querySelector('.add-column-btn');
-    
-    const columnId = 'column-' + Date.now();
-    const statusId = 'Status-' + Date.now();
-    
-    const newColumn = document.createElement('div');
-    newColumn.className = 'kanban-column';
-    newColumn.setAttribute('data-status', statusId);
-    newColumn.setAttribute('data-custom', 'true');
-    newColumn.draggable = true;
-    
-    newColumn.innerHTML = `
-        <div class="kanban-column-header" onmousedown="startDragColumn(event, this)">
-            <i class="fas fa-grip-vertical column-drag-handle"></i>
-            <span class="column-title">${escapeHtml(name)}</span>
-            <span class="column-count" id="count-${columnId}">0</span>
-            <button class="column-delete-btn" onclick="event.stopPropagation(); deleteColumn(this, '${escapeHtml(name)}')" title="Eliminar columna">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-        <div class="kanban-column-content" id="${columnId}" ondrop="drop(event, '${statusId}')" ondragover="allowDrop(event)">
-        </div>
-    `;
-    
-    board.insertBefore(newColumn, addBtn);
-    showToast(`Columna "${name}" agregada`);
-}
-
-function deleteColumn(button, columnName) {
-    if (!confirm(`¿Eliminar la columna "${columnName}"? Las historias en esta columna se moverán a "Por hacer".`)) {
-        return;
-    }
-    
-    const column = button.closest('.kanban-column');
-    if (!column) return;
-    
-    // Move stories to Backlog
-    const stories = column.querySelectorAll('.kanban-card');
-    const backlogColumn = document.querySelector('[data-status="Backlog"] .kanban-column-content');
-    
-    stories.forEach(story => {
-        if (backlogColumn) {
-            backlogColumn.appendChild(story);
-        }
-    });
-    
-    // Remove column
-    column.remove();
-    showToast(`Columna "${columnName}" eliminada`);
-}
-
-function toggleProjectMenu(projectId, projectName, isCreator) {
-    // Close all other menus first
-    document.querySelectorAll('.project-menu').forEach(menu => {
-        if (menu.id !== `project-menu-${projectId}`) {
-            menu.style.display = 'none';
-        }
-    });
-    
-    const menu = document.getElementById(`project-menu-${projectId}`);
-    if (menu) {
-        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-    }
-}
-
-function openConfigureProjectModal(projectId, name, key, color, icon) {
-    document.getElementById('configure-project-id').value = projectId;
-    document.getElementById('configure-project-name').value = name;
-    document.getElementById('configure-project-key').value = key;
-    document.getElementById('configure-project-color').value = color || '#8b5cf6';
-    document.getElementById('configure-project-icon').value = icon || 'folder';
-    showModal('configure-project-modal');
-}
-
-// Configure project form handler
-document.getElementById('configure-project-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
-    const projectId = document.getElementById('configure-project-id').value;
-    const name = document.getElementById('configure-project-name').value;
-    const key = document.getElementById('configure-project-key').value;
-    const color = document.getElementById('configure-project-color').value;
-    const icon = document.getElementById('configure-project-icon').value;
-    
-    try {
-        await apiRequest(`/api/projects/${projectId}?userId=${currentUser.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, key, color, icon, userId: currentUser.id })
-        });
-        
-        showToast('Proyecto actualizado');
-        hideModal('configure-project-modal');
-        loadProjects();
-    } catch (error) {
-        showToast('Error: ' + error.message, 'error');
-    }
-});
-
-// Close menu when clicking outside
-document.addEventListener('click', (e) => {
-    if (!e.target.closest('.sidebar-project-item')) {
-        document.querySelectorAll('.project-menu').forEach(menu => {
-            menu.style.display = 'none';
-        });
-    }
-});
-
-function renderProjects() {
-    const container = document.getElementById('projects-list');
-    if (!container) return;
-    
-    if (projects.length === 0) {
-        container.innerHTML = '<div class="empty-state"><i class="fas fa-folder-open"></i><p>No hay proyectos. Crea uno nuevo.</p></div>';
-        return;
-    }
-    
-    container.innerHTML = projects.map(p => {
-        // Get icon based on stored value
-        const iconMap = {
-            'folder': '<i class="fas fa-folder"></i>',
-            'rocket': '<i class="fas fa-rocket"></i>',
-            'code': '<i class="fas fa-code"></i>',
-            'mobile': '<i class="fas fa-mobile-alt"></i>',
-            'globe': '<i class="fas fa-globe"></i>'
-        };
-        const iconHtml = iconMap[p.icon] || iconMap['folder'];
-        
-        // Use stored color or default gradient
-        const iconStyle = p.color ? `background: ${p.color};` : '';
-        
-        // Use stored key or generate from ID
-        const projectKey = p.key ? p.key : `PROJ-${p.id.substring(0, 4).toUpperCase()}`;
-        
-        // Check if current user is the creator (compare as strings)
-        const currentUserId = currentUser?.id?.toString().toLowerCase();
-        const projectOwnerId = p.productOwnerId?.toString().toLowerCase();
-        const isCreator = currentUserId && projectOwnerId && currentUserId === projectOwnerId;
-        
-        return `
-        <div class="project-card">
-            <div class="project-card-header">
-                <div class="project-icon" style="${iconStyle}">
-                    ${iconHtml}
-                </div>
-                <div class="project-title">
-                    <h4>${escapeHtml(p.name)}</h4>
-                    <span class="project-key">${projectKey}</span>
-                    ${p.creatorName ? `<span class="project-creator">👤 ${escapeHtml(p.creatorName)}</span>` : ''}
-                </div>
-                <div class="project-actions">
-                    <button class="btn btn-icon btn-small" onclick="editProject('${p.id}')" title="Editar">
-                        <i class="fas fa-edit"></i>
-                    </button>
-                    <button class="btn btn-icon btn-small" onclick="openAddMembersModal('${p.id}', '${escapeHtml(p.name)}')" title="Agregar miembros">
-                        <i class="fas fa-user-plus"></i>
-                    </button>
-                    ${isCreator 
-                        ? `<button class="btn btn-icon btn-small text-danger" onclick="deleteProject('${p.id}')" title="Eliminar proyecto">
-                            <i class="fas fa-trash"></i>
-                        </button>`
-                        : `<button class="btn btn-icon btn-small text-warning" onclick="leaveProject('${p.id}', '${escapeHtml(p.name)}')" title="Salir del proyecto">
-                            <i class="fas fa-sign-out-alt"></i>
-                        </button>`
-                    }
-                </div>
-            </div>
-            <p class="project-description">${escapeHtml(p.description || 'Sin descripción')}</p>
-            <div class="project-stats">
-                <div class="stat-item">
-                    <i class="fas fa-book"></i>
-                    <span>Historias</span>
-                    <strong>0</strong>
-                </div>
-                <div class="stat-item">
-                    <i class="fas fa-star"></i>
-                    <span>Points</span>
-                    <strong>0</strong>
-                </div>
-                <div class="stat-item">
-                    <i class="fas fa-users"></i>
-                    <span>Miembros</span>
-                    <strong>${p.members?.length || 0}</strong>
-                </div>
-            </div>
-            <div class="project-footer">
-                <div class="project-members">
-                    ${p.members?.slice(0, 3).map((m, i) => {
-                        const initials = m.name?.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) || '?';
-                        return `<div class="member-avatar" style="margin-left: ${i > 0 ? '-8px' : '0'}; z-index: ${10-i};">${initials}</div>`;
-                    }).join('') || '<span class="text-muted" style="font-size: 12px;">Sin miembros</span>'}
-                    ${p.members?.length > 3 ? `<div class="member-avatar" style="margin-left: -8px; background: var(--bg-hover); color: var(--text-muted);">+${p.members.length - 3}</div>` : ''}
-                </div>
-                <span class="project-date">
-                    <i class="fas fa-calendar"></i> ${new Date(p.createdAt).toLocaleDateString()}
-                </span>
-            </div>
-        </div>
-    `}).join('');
 }
 
 // Temporary members list for new project
@@ -1139,14 +782,10 @@ async function searchMemberByEmail() {
             renderMembersToAdd();
             document.getElementById('member-email-search').value = '';
         } else {
-            showToast('Usuario no encontrado', 'error');
+            showToast('Este usuario no está registrado en el sistema', 'error');
         }
     } catch (error) {
-        if (error.message.includes('404') || error.message.includes('Not Found')) {
-            showToast('Usuario no encontrado', 'error');
-        } else {
-            showToast('Error: ' + error.message, 'error');
-        }
+        showToast('Error: ' + error.message, 'error');
     }
 }
 
@@ -1385,6 +1024,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Confirm delete story button handler
+    const confirmDeleteStoryBtn = document.getElementById('confirm-delete-story-btn');
+    if (confirmDeleteStoryBtn) {
+        confirmDeleteStoryBtn.addEventListener('click', confirmDeleteStory);
+    }
+
     // Confirm leave button handler
     const confirmLeaveBtn = document.getElementById('confirm-leave-btn');
     if (confirmLeaveBtn) {
@@ -1422,23 +1067,23 @@ async function loadBacklog() {
         console.log('Fetching sprints and stories for project:', selectedProjectId);
         
         // 1. Obtener sprints del proyecto
-        const sprints = await apiRequest(`/api/sprints/project/${selectedProjectId}`);
+        sprints = await apiRequest(`/api/sprints/project/${selectedProjectId}`);
         console.log('Sprints received:', sprints);
         
         // 2. Obtener TODAS las historias del proyecto (incluyendo las de sprints)
-        const allStories = await apiRequest(`/api/stories/project/${selectedProjectId}`);
-        console.log('All stories received:', allStories);
+        stories = await apiRequest(`/api/stories/project/${selectedProjectId}`);
+        console.log('All stories received:', stories);
         
         // 3. Separar historias: backlog (sin sprint) y las que están en sprints
-        const backlogStories = allStories.filter(s => !s.sprintId || s.sprintId === '');
-        const sprintStories = allStories.filter(s => s.sprintId && s.sprintId !== '');
+        const backlogStories = stories.filter(s => !s.sprintId || s.sprintId === '');
+        const sprintStories = stories.filter(s => s.sprintId && s.sprintId !== '');
         
         console.log('Backlog stories:', backlogStories.length, 'Sprint stories:', sprintStories.length);
         
         const project = projects.find(p => p.id === selectedProjectId);
         
         // 4. Renderizar backlog con sprints e historias
-        renderProjectBacklog(sprints || [], allStories || [], project?.members || []);
+        renderProjectBacklog(sprints || [], stories || [], project?.members || []);
     } catch (error) {
         console.error('Error loading project backlog:', error);
         content.innerHTML = '<p class="empty-state">Error al cargar backlog</p>';
@@ -1525,7 +1170,7 @@ function renderProjectBacklog(sprints, stories, members) {
                                 <div class="backlog-badge inprogress" title="En curso">${sprintInProgress}</div>
                                 <div class="backlog-badge done" title="Hecho">${sprintDone}</div>
                             </div>
-                            <button type="button" class="create-sprint-btn" onclick="showStartSprintModalForSprint('${sprintId}')" ${sprintStoryCount === 0 ? 'disabled' : ''}>Iniciar sprint</button>
+                            <button type="button" class="create-sprint-btn ${sprint.status === 'Active' ? 'btn-complete' : ''}" onclick="${sprint.status === 'Active' ? `completeSprint('${sprint.id}')` : `showStartSprintModalForSprint('${sprintId}')`}" ${sprintStoryCount === 0 && sprint.status !== 'Active' ? 'disabled' : ''}>${sprint.status === 'Active' ? 'Completar sprint' : 'Iniciar sprint'}</button>
                             <div class="sprint-menu-container">
                                 <button type="button" class="sprint-menu-btn" onclick="toggleSprintOptionsMenu(event, '${sprintId}')" title="Más opciones">
                                     <svg fill="none" viewBox="0 0 16 16" role="presentation">
@@ -1550,7 +1195,13 @@ function renderProjectBacklog(sprints, stories, members) {
                         </div>
                     </div>
                     <div class="sprint-content" id="sprint-content-${sprintId}" ondragover="allowBacklogDrop(event)" ondrop="dropStoryOnSprint(event, '${sprintId}')">
-                        ${sprintStories.map(story => createBacklogStoryCard(story, members, projectKey)).join('')}
+                        ${sprintStories.length > 0 
+                            ? sprintStories.map(story => createBacklogStoryCard(story, members, projectKey)).join('')
+                            : `<div class="sprint-empty-message" style="padding: 24px; text-align: center; color: var(--text-muted); border: 2px dashed var(--border-color); border-radius: 8px; margin: 8px 0;">
+                                <i class="fas fa-hand-pointer" style="font-size: 24px; margin-bottom: 8px; display: block;"></i>
+                                <span>Planifica un sprint arrastrando actividades hasta él o arrastrando el pie de página del sprint.</span>
+                               </div>`
+                        }
                     </div>
                     <div class="backlog-nudge-container" id="create-story-container-${sprintId}">
                         <div class="create-story-form" id="create-story-form-${sprintId}" style="display: none;">
@@ -1777,13 +1428,27 @@ function renderProjectBacklog(sprints, stories, members) {
     // Render stories in sprint content (Sprint 1 - only stories without sprintId)
     const sprintContent = document.getElementById('sprint-content');
     if (sprintContent) {
-        sprintContent.innerHTML = sprint1Stories.map(story => createBacklogStoryCard(story, members, projectKey)).join('');
+        if (sprint1Stories.length > 0) {
+            sprintContent.innerHTML = sprint1Stories.map(story => createBacklogStoryCard(story, members, projectKey)).join('');
+        } else {
+            sprintContent.innerHTML = `<div class="sprint-empty-message" style="padding: 24px; text-align: center; color: var(--text-muted); border: 2px dashed var(--border-color); border-radius: 8px; margin: 8px 0;">
+                <i class="fas fa-hand-pointer" style="font-size: 24px; margin-bottom: 8px; display: block;"></i>
+                <span>Planifica un sprint arrastrando actividades hasta él o arrastrando el pie de página del sprint.</span>
+            </div>`;
+        }
     }
     
     // Render backlog stories
     const backlogContent = document.getElementById('backlog-content');
     if (backlogContent) {
-        backlogContent.innerHTML = backlogStories.map(story => createBacklogStoryCard(story, members, projectKey)).join('');
+        if (backlogStories.length > 0) {
+            backlogContent.innerHTML = backlogStories.map(story => createBacklogStoryCard(story, members, projectKey)).join('');
+        } else {
+            backlogContent.innerHTML = `<div class="backlog-empty-message" style="padding: 24px; text-align: center; color: var(--text-muted); border: 2px dashed var(--border-color); border-radius: 8px; margin: 8px 0;">
+                <i class="fas fa-clipboard-list" style="font-size: 24px; margin-bottom: 8px; display: block;"></i>
+                <span>Tu Backlog está vacío</span>
+            </div>`;
+        }
     }
 
     const conceptualSprint = content.querySelector('.sprint-section:not([data-sprint-id])');
@@ -1793,6 +1458,7 @@ function renderProjectBacklog(sprints, stories, members) {
 function createBacklogStoryCard(story, members, projectKey) {
     const assignee = members.find(m => m.id === story.assigneeId);
     const assigneeInitials = assignee ? assignee.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : '?';
+    const assigneeColor = assignee ? getUserColor(assignee.id) : null;
     
     const priorityColors = {
         1: '#ff6b6b', // Alta - rojo
@@ -1860,7 +1526,7 @@ function createBacklogStoryCard(story, members, projectKey) {
                 </div>
                 <div class="story-points-inline">${story.storyPoints || '-'}</div>
                 ${assignee ? `
-                    <div class="assignee-avatar" title="${assignee.name} (${assignee.role})">
+                    <div class="assignee-avatar" style="background: ${assigneeColor}; color: white;" title="${assignee.name} (${assignee.role})">
                         ${assigneeInitials}
                     </div>
                 ` : '<div class="assignee-avatar unassigned" title="Sin asignar">?</div>'}
@@ -2007,122 +1673,15 @@ function toggleStoryActionsMenu(event, storyId) {
 }
 
 async function deleteBacklogStory(storyId) {
-    console.log('=== deleteBacklogStory START ===');
-    console.log('storyId:', storyId);
+    console.log('=== deleteBacklogStory START ===', storyId);
     
     // Close the menu
     const menu = document.getElementById(`story-actions-menu-${storyId}`);
     if (menu) menu.style.display = 'none';
     
-    // Confirm deletion
-    if (!confirm('¿Estás seguro de que deseas eliminar esta historia?')) {
-        console.log('Deletion cancelled by user');
-        return;
-    }
-    
-    try {
-        // 1. Obtener la tarjeta y determinar su ubicación ANTES de eliminar
-        const storyCard = document.querySelector(`[data-story-id="${storyId}"]`);
-        console.log('storyCard found:', storyCard);
-        
-        if (!storyCard) {
-            console.error('Story card not found for ID:', storyId);
-            showToast('Historia no encontrada en el DOM', 'error');
-            return;
-        }
-        
-        // Determinar dónde está la historia ANTES de eliminarla
-        const backlogContent = document.getElementById('backlog-content');
-        const sprintContent1 = document.getElementById('sprint-content'); // Sprint 1
-        const sprintContentDynamic = storyCard.closest('[id^="sprint-content-sprint-"]'); // Sprints dinámicos
-        
-        console.log('backlogContent:', backlogContent);
-        console.log('sprintContent1:', sprintContent1);
-        console.log('sprintContentDynamic:', sprintContentDynamic);
-        
-        // Guardar la ubicación para actualizar contadores después
-        let location = null;
-        let targetElement = null;
-        
-        if (backlogContent && backlogContent.contains(storyCard)) {
-            location = 'backlog';
-            targetElement = backlogContent;
-            console.log('Location detected: backlog');
-        } else if (sprintContent1 && sprintContent1.contains(storyCard)) {
-            location = 'sprint1';
-            targetElement = sprintContent1;
-            console.log('Location detected: sprint1');
-        } else if (sprintContentDynamic) {
-            location = 'sprintDynamic';
-            targetElement = sprintContentDynamic;
-            console.log('Location detected: sprintDynamic');
-        } else {
-            console.log('WARNING: Could not detect location!');
-        }
-        
-        // 2. Eliminar en el backend
-        console.log('Deleting from backend:', storyId);
-        await apiRequest(`/api/stories/${storyId}`, { method: 'DELETE' });
-        console.log('Backend deletion successful');
-        
-        // 3. Eliminar la tarjeta del DOM
-        storyCard.remove();
-        console.log('DOM removal successful');
-        
-        // 4. Actualizar contadores según la ubicación guardada
-        console.log('Updating counters for location:', location);
-        if (location === 'backlog' && targetElement) {
-            const activityCount = targetElement.querySelectorAll('.backlog-story-card').length;
-            console.log('Backlog activity count:', activityCount);
-            const backlogSection = document.querySelector('.backlog-section');
-            const countSpan = backlogSection?.querySelector('.activity-count');
-            if (countSpan) {
-                countSpan.textContent = `(${activityCount} actividades)`;
-            }
-            const todoBadge = backlogSection?.querySelector('.backlog-badge.todo');
-            if (todoBadge) {
-                todoBadge.textContent = activityCount;
-            }
-        } else if (location === 'sprint1' && targetElement) {
-            const activityCount = targetElement.querySelectorAll('.backlog-story-card').length;
-            console.log('Sprint1 activity count:', activityCount);
-            const sprintSection = document.getElementById('sprint-1')?.closest('.sprint-section');
-            const countSpan = sprintSection?.querySelector('.activity-count');
-            if (countSpan) {
-                countSpan.textContent = `(${activityCount} actividades)`;
-            }
-            const todoBadge = sprintSection?.querySelector('.backlog-badge.todo');
-            if (todoBadge) {
-                todoBadge.textContent = activityCount;
-            }
-            const startSprintBtn = sprintSection?.querySelector('.create-sprint-btn');
-            if (startSprintBtn) {
-                startSprintBtn.disabled = activityCount === 0;
-            }
-        } else if (location === 'sprintDynamic' && targetElement) {
-            const activityCount = targetElement.querySelectorAll('.backlog-story-card').length;
-            console.log('SprintDynamic activity count:', activityCount);
-            const sprintSection = targetElement.closest('.sprint-section');
-            const countSpan = sprintSection?.querySelector('.activity-count');
-            if (countSpan) {
-                countSpan.textContent = `(${activityCount} actividades)`;
-            }
-            const todoBadge = sprintSection?.querySelector('.backlog-badge.todo');
-            if (todoBadge) {
-                todoBadge.textContent = activityCount;
-            }
-            const startSprintBtn = sprintSection?.querySelector('.create-sprint-btn');
-            if (startSprintBtn) {
-                startSprintBtn.disabled = activityCount === 0;
-            }
-        }
-        
-        showToast('Historia eliminada', 'success');
-        console.log('=== deleteBacklogStory END ===');
-    } catch (error) {
-        console.error('Error deleting story:', error);
-        showToast('Error al eliminar historia: ' + error.message, 'error');
-    }
+    // Show confirmation modal
+    storyToDelete = storyId;
+    showModal('delete-story-modal');
 }
 
 async function editStorySummary(storyId) {
@@ -2818,6 +2377,90 @@ function showStartSprintModalForSprint(sprintId) {
     showStartSprintModal(activityCount, sprintName, actualSprintId);
 }
 
+// Variables globales para completar sprint
+let currentSprintToComplete = null;
+let currentSprintStories = [];
+
+// Función para completar un sprint activo
+async function completeSprint(sprintId) {
+    const sprint = sprints.find(s => s.id === sprintId);
+    if (!sprint) {
+        showToast('Sprint no encontrado', 'error');
+        return;
+    }
+    
+    // Obtener historias del sprint
+    const sprintStories = stories.filter(s => s.sprintId === sprintId);
+    currentSprintStories = sprintStories;
+    currentSprintToComplete = sprintId;
+    
+    // Contar actividades completadas vs abiertas
+    const completedCount = sprintStories.filter(s => s.status === 'Done').length;
+    const openCount = sprintStories.length - completedCount;
+    
+    // Llenar modal con datos
+    document.getElementById('complete-sprint-name').textContent = sprint.name || 'Sprint';
+    document.getElementById('complete-sprint-completed').textContent = completedCount;
+    document.getElementById('complete-sprint-open').textContent = openCount;
+    
+    // Llenar opciones de destino (otros sprints activos o backlog)
+    const destinationSelect = document.getElementById('complete-sprint-destination');
+    destinationSelect.innerHTML = '<option value="backlog">Backlog</option>';
+    
+    // Agregar otros sprints que no estén completados
+    sprints.filter(s => s.id !== sprintId && s.status !== 'Completed').forEach(s => {
+        const option = document.createElement('option');
+        option.value = s.id;
+        option.textContent = s.name;
+        destinationSelect.appendChild(option);
+    });
+    
+    showModal('complete-sprint-modal');
+}
+
+// Función para confirmar completar sprint
+async function confirmCompleteSprint() {
+    if (!currentSprintToComplete) {
+        showToast('Error: No hay sprint seleccionado', 'error');
+        return;
+    }
+    
+    const destination = document.getElementById('complete-sprint-destination').value;
+    const destinationName = destination === 'backlog' ? 'Backlog' : 
+        sprints.find(s => s.id === destination)?.name || 'Otro sprint';
+    
+    try {
+        // Mover historias abiertas si es necesario
+        const openStories = currentSprintStories.filter(s => s.status !== 'Done');
+        
+        if (openStories.length > 0 && destination !== 'backlog') {
+            // Mover historias al sprint seleccionado
+            for (const story of openStories) {
+                await apiRequest(`/api/stories/${story.id}/move`, {
+                    method: 'POST',
+                    body: JSON.stringify({ sprintId: destination, status: 'SprintBacklog' })
+                });
+            }
+        }
+        
+        // Completar el sprint
+        await apiRequest(`/api/sprints/${currentSprintToComplete}/complete`, {
+            method: 'POST'
+        });
+        
+        showToast(`Sprint completado exitosamente. ${openStories.length > 0 ? `Actividades abiertas movidas a ${destinationName}.` : ''}`, 'success');
+        hideModal('complete-sprint-modal');
+        loadBacklog(); // Recargar la vista
+        
+        // Limpiar variables
+        currentSprintToComplete = null;
+        currentSprintStories = [];
+    } catch (error) {
+        console.error('Error completing sprint:', error);
+        showToast('Error al completar el sprint', 'error');
+    }
+}
+
 function calculateEndDate() {
     const duration = document.getElementById('sprint-duration').value;
     const startDate = document.getElementById('sprint-start-date').value;
@@ -3424,11 +3067,27 @@ async function editStory(id) {
 }
 
 async function deleteStory(id) {
-    if (!confirm('¿Eliminar esta historia?')) return;
+    storyToDelete = id;
+    showModal('delete-story-modal');
+}
+
+// Confirm delete story from modal
+async function confirmDeleteStory() {
+    if (!storyToDelete) return;
     
     try {
-        await apiRequest(`/api/stories/${id}`, { method: 'DELETE' });
-        loadBacklog();
+        await apiRequest(`/api/stories/${storyToDelete}`, { method: 'DELETE' });
+        hideModal('delete-story-modal');
+        storyToDelete = null;
+        
+        // Refresh current view
+        const currentPage = window.location.hash.substring(1);
+        if (currentPage.startsWith('board')) {
+            refreshCurrentBoardView();
+        } else {
+            loadBacklog();
+        }
+        
         showToast('Historia eliminada');
     } catch (error) {
         showToast('Error al eliminar', 'error');
@@ -3558,15 +3217,17 @@ function createKanbanCard(story, members) {
     // Generate avatar HTML for assignee (clickable)
     const assignee = members.find(m => m.id === story.assigneeId);
     const assigneeInitials = assignee ? assignee.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : '?';
+    const assigneeColor = assignee ? getUserColor(assignee.id) : null;
     const assigneeAvatar = assignee 
-        ? `<div class="kanban-card-assignee assigned" data-story-id="${story.id}" onclick="showAssigneeDropdown(event, '${story.id}')" title="${escapeHtml(assignee.name)} (${assignee.role}) - Click para reasignar">${assigneeInitials}</div>`
+        ? `<div class="kanban-card-assignee assigned" style="background: ${assigneeColor};" data-story-id="${story.id}" onclick="showAssigneeDropdown(event, '${story.id}')" title="${escapeHtml(assignee.name)} (${assignee.role}) - Click para reasignar">${assigneeInitials}</div>`
         : `<div class="kanban-card-assignee unassigned" data-story-id="${story.id}" onclick="showAssigneeDropdown(event, '${story.id}')" title="Sin asignar - Click para asignar">?</div>`;
     
     // Generate member avatars row (like Jira)
     const memberAvatars = members.slice(0, 3).map((m, i) => {
         const initials = m.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
         const isAssigned = m.id === story.assigneeId;
-        return `<div class="member-avatar ${isAssigned ? 'active' : ''}" title="${escapeHtml(m.name)}" style="z-index: ${10-i}; margin-left: ${i > 0 ? '-8px' : '0'};">${initials}</div>`;
+        const userColor = getUserColor(m.id);
+        return `<div class="member-avatar ${isAssigned ? 'active' : ''}" title="${escapeHtml(m.name)}" style="z-index: ${10-i}; margin-left: ${i > 0 ? '-8px' : '0'}; background: ${userColor};">${initials}</div>`;
     }).join('');
     
     const extraMembers = members.length > 3 ? `<div class="member-avatar more" style="margin-left: -8px;">+${members.length - 3}</div>` : '';
@@ -3630,6 +3291,22 @@ function createKanbanCard(story, members) {
     return card;
 }
 
+// Generate consistent color for a user based on their ID
+function getUserColor(userId) {
+    const colors = [
+        '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899',
+        '#f43f5e', '#e11d48', '#f97316', '#f59e0b', '#eab308',
+        '#84cc16', '#22c55e', '#10b981', '#14b8a6', '#06b6d4',
+        '#0ea5e9', '#3b82f6', '#6366f1', '#4f46e5', '#7c3aed'
+    ];
+    let hash = 0;
+    for (let i = 0; i < userId.length; i++) {
+        hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+        hash = hash & hash;
+    }
+    return colors[Math.abs(hash) % colors.length];
+}
+
 // Show dropdown for assignee selection on kanban card
 function showAssigneeDropdown(event, storyId) {
     event.stopPropagation();
@@ -3662,9 +3339,10 @@ function showAssigneeDropdown(event, storyId) {
     members.forEach(member => {
         const initials = member.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
         const isAssigned = storyElement.dataset.assigneeId === member.id;
+        const userColor = getUserColor(member.id);
         optionsHtml += `
             <div class="assignee-option ${isAssigned ? 'selected' : ''}" onclick="assignStoryToMember('${storyId}', '${member.id}')">
-                <div class="assignee-avatar assigned">${initials}</div>
+                <div class="assignee-avatar" style="background: ${userColor}; color: white;">${initials}</div>
                 <div class="assignee-info">
                     <span class="assignee-name">${escapeHtml(member.name)}</span>
                     <span class="assignee-email">${escapeHtml(member.email)}</span>
@@ -3725,14 +3403,17 @@ async function assignStoryToMember(storyId, memberId) {
         const project = projects.find(p => p.id === selectedProjectId);
         const member = memberId ? project?.members?.find(m => m.id === memberId) : null;
         const assigneeInitials = member ? member.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : '?';
+        const assigneeColor = member ? getUserColor(member.id) : null;
         
         // Find and update the assignee avatar in the card
         const card = document.querySelector(`.kanban-card[data-story-id="${storyId}"]`);
+        
         if (card) {
             const assigneeAvatar = card.querySelector('.kanban-card-assignee');
             if (assigneeAvatar) {
                 if (member) {
                     assigneeAvatar.className = 'kanban-card-assignee assigned';
+                    assigneeAvatar.style.background = assigneeColor;
                     assigneeAvatar.textContent = assigneeInitials;
                     assigneeAvatar.title = `${escapeHtml(member.name)} (${member.role}) - Click para reasignar`;
                     assigneeAvatar.dataset.assigneeId = member.id;
@@ -4320,16 +4001,11 @@ function getStatusText(status) {
 }
 
 async function deleteStoryKanban(id) {
-    if (!confirm('¿Eliminar esta historia?')) return;
-    
-    try {
-        await apiRequest(`/api/stories/${id}`, { method: 'DELETE' });
-        refreshCurrentBoardView();
-        showToast('Historia eliminada');
-    } catch (error) {
-        showToast('Error al eliminar', 'error');
-    }
+    storyToDelete = id;
+    showModal('delete-story-modal');
 }
+
+// Confirm delete story from Kanban (uses same confirm function as backlog)
 
 // ==================== UTILS ====================
 function getPriorityText(priority) {
