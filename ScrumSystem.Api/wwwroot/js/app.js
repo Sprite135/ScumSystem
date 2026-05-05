@@ -39,7 +39,7 @@ function checkAuth() {
     if (user) {
         currentUser = JSON.parse(user);
         showMainApp();
-        loadPage('dashboard');
+        loadPage('welcome');
     } else {
         window.location.href = 'login.html';
     }
@@ -106,6 +106,7 @@ async function loadPage(pageName) {
 
 function initPage(pageName) {
     switch(pageName) {
+        case 'welcome': loadWelcome(); break;
         case 'dashboard': loadDashboard(); setupDashboardListener(); break;
         case 'projects': loadProjects(); break;
         case 'backlog': loadBacklog(); setupBacklogListener(); break;
@@ -159,6 +160,87 @@ async function apiRequest(endpoint, options = {}) {
     
     if (response.status === 204) return null;
     return response.json();
+}
+
+// ==================== WELCOME ====================
+async function loadWelcome() {
+    console.log('=== loadWelcome START ===');
+    
+    // Update welcome message with user name
+    const welcomeMessage = document.getElementById('welcome-message');
+    if (welcomeMessage && currentUser) {
+        const hour = new Date().getHours();
+        let greeting = 'Buenos días';
+        if (hour >= 12 && hour < 18) greeting = 'Buenas tardes';
+        else if (hour >= 18) greeting = 'Buenas noches';
+        
+        welcomeMessage.textContent = `${greeting}, ${currentUser.name}! Estás listo para gestionar tus proyectos Scrum`;
+    }
+    
+    try {
+        // Load projects
+        await loadProjects();
+        
+        // Load stats
+        const stats = await apiRequest('/api/dashboard/stats');
+        document.getElementById('welcome-projects').textContent = stats.totalProjects || 0;
+        document.getElementById('welcome-stories').textContent = stats.totalStories || 0;
+        document.getElementById('welcome-tasks').textContent = stats.totalTasks || 0;
+        
+        // Load recent projects
+        loadRecentProjects();
+    } catch (error) {
+        console.error('Error loading welcome page:', error);
+    }
+}
+
+function loadRecentProjects() {
+    const recentProjectsGrid = document.getElementById('recent-projects-grid');
+    const recentProjectsSection = document.getElementById('recent-projects');
+    
+    if (!recentProjectsGrid || !recentProjectsSection) return;
+    
+    if (!projects || projects.length === 0) {
+        recentProjectsSection.style.display = 'none';
+        return;
+    }
+    
+    // Show only first 6 projects, most recent first
+    const recentProjects = projects
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 6);
+    
+    recentProjectsGrid.innerHTML = recentProjects.map(project => {
+        const iconHtml = iconMap[project.icon] || iconMap['folder'];
+        return `
+            <div class="project-card-welcome" onclick="selectProject('${project.id}')">
+                <h4>${escapeHtml(project.name)}</h4>
+                <p>${new Date(project.createdAt).toLocaleDateString()}</p>
+            </div>
+        `;
+    }).join('');
+}
+
+function navigateToFirstProject() {
+    if (projects && projects.length > 0) {
+        selectProject(projects[0].id);
+    } else {
+        showModal('project-modal');
+    }
+}
+
+function showCreateQuickStory() {
+    if (!projects || projects.length === 0) {
+        showToast('Primero crea un proyecto', 'warning');
+        showModal('project-modal');
+        return;
+    }
+    
+    // Navigate to first project and show story modal
+    selectProject(projects[0].id);
+    setTimeout(() => {
+        showModal('story-modal');
+    }, 500);
 }
 
 // ==================== DASHBOARD ====================
@@ -436,6 +518,9 @@ function loadProjectView() {
             </div>
             
             <div class="project-nav-tabs">
+                <button class="project-nav-tab ${projectSubTab === 'dashboard' ? 'active' : ''}" onclick="switchProjectTab('dashboard')">
+                    Dashboard
+                </button>
                 <button class="project-nav-tab ${projectSubTab === 'backlog' ? 'active' : ''}" onclick="switchProjectTab('backlog')">
                     Backlog
                 </button>
@@ -513,12 +598,60 @@ function loadProjectContent() {
     // Load project members
     loadProjectMembers();
     
-    if (projectSubTab === 'backlog') {
+    if (projectSubTab === 'dashboard') {
+        // Load dashboard view
+        loadProjectDashboard();
+    } else if (projectSubTab === 'backlog') {
         // Load backlog view
         loadBacklog();
     } else if (projectSubTab === 'board') {
         // Load kanban board directly in project view
         loadProjectBoard();
+    }
+}
+
+async function loadProjectDashboard() {
+    console.log('=== loadProjectDashboard START ===');
+    console.log('selectedProjectId:', selectedProjectId);
+    
+    const content = document.getElementById('project-content');
+    if (!content || !selectedProjectId) {
+        console.log('No content or selectedProjectId');
+        return;
+    }
+    
+    try {
+        // Load dashboard HTML
+        const response = await fetch('pages/dashboard.html');
+        if (!response.ok) throw new Error(`Failed to load dashboard: ${response.status}`);
+        const html = await response.text();
+        content.innerHTML = html;
+        
+        // Load dashboard stats
+        const stats = await apiRequest('/api/dashboard/stats');
+        const statProjects = document.getElementById('stat-projects');
+        const statStories = document.getElementById('stat-stories');
+        const statTasks = document.getElementById('stat-tasks');
+        if (statProjects) statProjects.textContent = stats.totalProjects || 0;
+        if (statStories) statStories.textContent = stats.totalStories || 0;
+        if (statTasks) statTasks.textContent = stats.completedTasks || 0;
+        
+        // Load stories for dashboard
+        const stories = await apiRequest(`/api/stories/project/${selectedProjectId}/backlog`);
+        renderDashboardStories(stories);
+        
+        // Calculate story points and completed
+        const totalPoints = stories.reduce((sum, s) => sum + (s.storyPoints || 0), 0);
+        const completed = stories.filter(s => s.status === 'Done').length;
+        const statPoints = document.getElementById('stat-points');
+        const statDone = document.getElementById('stat-done');
+        if (statPoints) statPoints.textContent = totalPoints;
+        if (statDone) statDone.textContent = completed;
+        
+        loadBurndownSprints();
+    } catch (error) {
+        console.error('Error loading project dashboard:', error);
+        content.innerHTML = '<p class="empty-state">Error al cargar dashboard</p>';
     }
 }
 

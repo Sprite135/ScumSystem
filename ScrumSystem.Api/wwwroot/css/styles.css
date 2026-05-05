@@ -6772,11 +6772,7 @@ padding: 0;
     cursor: pointer;
 }
 
-.member-avatar:nth-child(1) { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); }
-.member-avatar:nth-child(2) { background: linear-gradient(135deg, #ec4899 0%, #f43f5e 100%); }
-.member-avatar:nth-child(3) { background: linear-gradient(135deg, #10b981 0%, #14b8a6 100%); }
-.member-avatar:nth-child(4) { background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%); }
-.member-avatar:nth-child(5) { background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%); }
+/* Colores de avatar ahora manejados por getUserColor() - colores determinísticos por usuario ID */
 
 .member-avatar.active {
     border-color: #22c55e;
