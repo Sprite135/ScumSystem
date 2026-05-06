@@ -141,6 +141,9 @@ public static class TaskRoutes
                 return Results.NotFound();
             }
 
+            Console.WriteLine($"[TaskRoutes] Assigning task {id} to user {request.AssignedToId}");
+            Console.WriteLine($"[TaskRoutes] Current assignedToId: {currentTask.AssignedToId}");
+
             // Update task assignment
             var updateSql = @"
                 UPDATE Tasks 
@@ -152,12 +155,14 @@ public static class TaskRoutes
                 updateCmd.Parameters.AddWithValue("@Id", id);
                 updateCmd.Parameters.AddWithValue("@AssignedToId", 
                     !string.IsNullOrEmpty(request.AssignedToId) ? (object)Guid.Parse(request.AssignedToId) : DBNull.Value);
-                await updateCmd.ExecuteNonQueryAsync();
+                var rowsAffected = await updateCmd.ExecuteNonQueryAsync();
+                Console.WriteLine($"[TaskRoutes] Update affected {rowsAffected} rows");
             }
 
             await AddStoryHistoryAsync(connection, currentTask.StoryId, request.AssignedToId, "SubtaskAssigned", $"Subtarea '{currentTask.Title}' asignada.");
             
             var updatedTask = await GetTaskByIdAsync(connection, id);
+            Console.WriteLine($"[TaskRoutes] Updated task assignedToId: {updatedTask.AssignedToId}");
             return Results.Ok(updatedTask);
         });
 

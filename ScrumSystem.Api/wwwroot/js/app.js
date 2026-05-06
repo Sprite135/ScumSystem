@@ -73,6 +73,8 @@ function showMainApp() {
 
 function logout() {
     localStorage.removeItem('scrumUser');
+    // Clear cache to ensure fresh data on next login
+    taskCache.clear();
     window.location.href = 'login.html';
 }
 
