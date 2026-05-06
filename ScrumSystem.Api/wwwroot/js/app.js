@@ -3677,13 +3677,13 @@ async function openIssueDetail(storyId) {
         let story = taskCache.get(storyCacheKey);
         
         if (!story) {
-            console.log('Loading story from API:', storyId);
             story = await apiRequest(`/api/stories/${storyId}`);
             // Cache the story for future use
             taskCache.set(storyCacheKey, story);
-        } else {
-            console.log('Loading story from cache:', storyId);
         }
+        
+        // Always ensure the story is cached (even if loaded from cache, refresh it)
+        taskCache.set(storyCacheKey, story);
         
         if (story.projectId) {
             try {
@@ -3705,7 +3705,6 @@ async function openIssueDetail(storyId) {
 }
 
 function renderIssueDetail(story) {
-    console.log('renderIssueDetail called with story:', story.id, 'subtasks count:', story.tasks?.length);
     const loading = document.getElementById('issue-detail-loading');
     const body = document.getElementById('issue-detail-body');
     const project = projects.find(p => p.id === story.projectId);
@@ -4258,18 +4257,15 @@ async function updateIssueSubtaskStatus(taskId, status) {
 
 async function updateIssueSubtaskAssignee(taskId, assigneeId) {
     try {
-        console.log('Assigning task:', taskId, 'to user:', assigneeId);
-        
         const response = await apiRequest(`/api/tasks/${taskId}/assign`, {
             method: 'PATCH',
             body: { assignedToId: assigneeId || '' }
         });
         
-        console.log('Assignment response:', response);
-        
         // Update task in currentIssueDetail without re-rendering the entire UI
-        if (currentIssueDetail && currentIssueDetail.subtasks) {
-            const subtask = currentIssueDetail.subtasks.find(st => st.id === taskId);
+        const tasks = currentIssueDetail?.tasks || currentIssueDetail?.subtasks;
+        if (currentIssueDetail && tasks) {
+            const subtask = tasks.find(st => st.id === taskId);
             if (subtask) {
                 subtask.assignedToId = assigneeId;
                 subtask.assignedToName = response.assignedToName || (assigneeId ? boardMembers.find(m => m.id === assigneeId)?.name : null);
@@ -4286,51 +4282,61 @@ async function updateIssueSubtaskAssignee(taskId, assigneeId) {
                 const storyCacheKey = `story_${currentIssueDetail.id}`;
                 const cachedStory = taskCache.get(storyCacheKey);
                 if (cachedStory) {
-                    const storySubtask = cachedStory.subtasks?.find(st => st.id === taskId);
+                    const storyTasks = cachedStory.tasks || cachedStory.subtasks;
+                    const storySubtask = storyTasks?.find(st => st.id === taskId);
                     if (storySubtask) {
                         storySubtask.assignedToId = assigneeId;
                         storySubtask.assignedToName = subtask.assignedToName;
                         taskCache.set(storyCacheKey, cachedStory);
-                        console.log('Updated story cache for task:', taskId, 'assigneeId:', assigneeId);
+                    } else {
+                        // If subtask not in cached story, add it
+                        if (!cachedStory.tasks && !cachedStory.subtasks) {
+                            cachedStory.tasks = [];
+                        }
+                        const targetArray = cachedStory.tasks || cachedStory.subtasks;
+                        targetArray.push({
+                            id: taskId,
+                            assignedToId: assigneeId,
+                            assignedToName: subtask.assignedToName
+                        });
+                        taskCache.set(storyCacheKey, cachedStory);
                     }
                 } else {
-                    console.log('No cached story found for key:', storyCacheKey);
+                    // Create cache entry if it doesn't exist
+                    const sourceTasks = currentIssueDetail.tasks || currentIssueDetail.subtasks;
+                    const newStoryCache = {
+                        ...currentIssueDetail,
+                        tasks: sourceTasks?.map(st => 
+                            st.id === taskId 
+                                ? { ...st, assignedToId: assigneeId, assignedToName: subtask.assignedToName }
+                                : st
+                        )
+                    };
+                    taskCache.set(storyCacheKey, newStoryCache);
                 }
                 
                 // Update subtask detail modal if it's open and this is the current subtask
                 if (currentSubtaskDetail && currentSubtaskDetail.id === taskId) {
-                    console.log('Updating subtask detail modal for task:', taskId);
                     currentSubtaskDetail.assignedToId = assigneeId;
                     currentSubtaskDetail.assignedToName = subtask.assignedToName;
                     
                     // Update assignee display in modal
                     const assigneeDisplay = document.getElementById('subtask-assignee-display');
-                    console.log('Assignee display element found:', !!assigneeDisplay);
-                    
                     const assignedMember = boardMembers.find(m => m.id === assigneeId);
-                    console.log('Assigned member found:', !!assignedMember, 'for assigneeId:', assigneeId);
                     
                     if (assigneeDisplay) {
                         if (assignedMember) {
-                            const newHTML = `
+                            assigneeDisplay.innerHTML = `
                                 <span class="subtask-assignee-avatar" style="background: ${getUserColor(assignedMember.id)} !important;">${getInitials(assignedMember.name)}</span>
                                 <span class="subtask-assignee-name">${escapeHtml(assignedMember.name)}</span>
                             `;
-                            console.log('Setting assignee display HTML:', newHTML);
-                            assigneeDisplay.innerHTML = newHTML;
                         } else {
-                            const newHTML = `
+                            assigneeDisplay.innerHTML = `
                                 <span class="subtask-assignee-avatar unassigned">?</span>
                                 <span class="subtask-assignee-name">Sin asignar</span>
                             `;
-                            console.log('Setting unassigned HTML:', newHTML);
-                            assigneeDisplay.innerHTML = newHTML;
                         }
                     }
-                } else {
-                    console.log('Subtask detail modal not open or different task');
-                    console.log('currentSubtaskDetail:', currentSubtaskDetail?.id);
-                    console.log('taskId:', taskId);
                 }
             }
         }
@@ -4691,8 +4697,9 @@ async function assignSubtaskToMe() {
     if (!currentSubtaskDetail || !currentUser) return;
     
     try {
-        await apiRequest(`/api/tasks/${currentSubtaskDetail.id}/assign`, 'PUT', { 
-            assignedToId: currentUser.id 
+        await apiRequest(`/api/tasks/${currentSubtaskDetail.id}/assign`, {
+            method: 'PATCH',
+            body: { assignedToId: currentUser.id }
         });
         currentSubtaskDetail.assignedToId = currentUser.id;
         
@@ -6044,7 +6051,10 @@ function insertSubtaskEmoji() {
 
 async function saveSubtaskDescription() {
     const editor = document.getElementById('subtask-description');
-    if (!editor || !currentSubtaskDetail) return;
+    if (!editor || !currentSubtaskDetail) {
+        console.error('Cannot save description: currentSubtaskDetail is null');
+        return;
+    }
     
     let description = editor.innerHTML;
     
