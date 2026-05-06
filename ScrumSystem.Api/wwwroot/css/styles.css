@@ -7221,6 +7221,11 @@ flex: 1;
 .kanban-card-priority.priority-2 { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
 .kanban-card-priority.priority-3 { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
 
+/* Text-based priority classes */
+.kanban-card-priority.priority-Low { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+.kanban-card-priority.priority-Medium { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+.kanban-card-priority.priority-High { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+
 .kanban-card-title {
     font-size: 14px;
     font-weight: 500;

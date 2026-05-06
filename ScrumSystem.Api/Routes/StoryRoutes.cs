@@ -29,7 +29,7 @@ public static class StoryRoutes
                 using var reader = await cmd.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
                 {
-                    var priorityText = reader.IsDBNull(7) ? "Medium" : reader.GetInt32(7) switch { 1 => "Low", 3 => "High", _ => "Medium" };
+                    var priorityText = ReadPriority(reader, 7);
                     stories.Add(new UserStoryDto
                     {
                         Id = reader.GetString(0),
@@ -80,7 +80,7 @@ public static class StoryRoutes
                         Description = reader.IsDBNull(4) ? null : reader.GetString(4),
                         AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
                         StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                        Priority = reader.IsDBNull(7) ? "Medium" : reader.GetString(7),
+                        Priority = ReadPriority(reader, 7),
                         Status = reader.GetString(8),
                         Key = reader.IsDBNull(9) ? null : reader.GetString(9),
                         AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
@@ -159,7 +159,7 @@ public static class StoryRoutes
                         Description = reader.IsDBNull(4) ? null : reader.GetString(4),
                         AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
                         StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                        Priority = reader.IsDBNull(7) ? "Medium" : reader.GetString(7),
+                        Priority = ReadPriority(reader, 7),
                         Status = reader.GetString(8),
                         Key = reader.IsDBNull(9) ? null : reader.GetString(9),
                         AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
@@ -202,7 +202,7 @@ public static class StoryRoutes
                         Description = reader.IsDBNull(4) ? null : reader.GetString(4),
                         AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
                         StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                        Priority = reader.IsDBNull(7) ? "Medium" : reader.GetString(7),
+                        Priority = ReadPriority(reader, 7),
                         Status = reader.GetString(8),
                         Key = reader.IsDBNull(9) ? null : reader.GetString(9),
                         AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
@@ -280,7 +280,7 @@ public static class StoryRoutes
                         Title = reader.GetString(3),
                         Description = reader.IsDBNull(4) ? null : reader.GetString(4),
                         StoryPoints = reader.IsDBNull(5) ? null : reader.GetInt32(5),
-                        Priority = reader.IsDBNull(6) ? "Medium" : reader.GetString(6),
+                        Priority = ReadPriority(reader, 6),
                         Status = reader.GetString(7),
                         AssigneeId = reader.IsDBNull(8) ? null : reader.GetString(8),
                         AssigneeName = reader.IsDBNull(9) ? null : reader.GetString(9)
@@ -479,7 +479,7 @@ public static class StoryRoutes
                 using var reader = await selectCmd.ExecuteReaderAsync();
                 if (await reader.ReadAsync())
                 {
-                    var priorityText = reader.IsDBNull(7) ? "Medium" : reader.GetString(7);
+                    var priorityText = ReadPriority(reader, 7);
                     var storyDto = new UserStoryDto
                     {
                         Id = reader.GetString(0),
@@ -753,6 +753,26 @@ public static class StoryRoutes
 
             return Results.Ok(new { message = "Historia eliminada" });
         });
+    }
+
+    private static string ReadPriority(SqlDataReader reader, int index)
+    {
+        if (reader.IsDBNull(index)) return "Medium";
+        var val = reader.GetValue(index);
+        if (val is int vi)
+        {
+            return vi switch { 1 => "Low", 3 => "High", _ => "Medium" };
+        }
+        var s = val?.ToString() ?? string.Empty;
+        if (int.TryParse(s, out var pi))
+        {
+            return pi switch { 1 => "Low", 3 => "High", _ => "Medium" };
+        }
+        s = s.Trim();
+        if (string.Equals(s, "Low", StringComparison.OrdinalIgnoreCase)) return "Low";
+        if (string.Equals(s, "High", StringComparison.OrdinalIgnoreCase)) return "High";
+        if (string.Equals(s, "Medium", StringComparison.OrdinalIgnoreCase)) return "Medium";
+        return s;
     }
 
     private static UserStoryDto ToStoryDto(UserStory story, AppDataStore store)

@@ -754,7 +754,7 @@ async function loadProjectBoard() {
         console.log('Stories count:', data.stories?.length || 0);
         console.log('Members count:', data.members?.length || 0);
         
-        boardMembers = data.members || [];
+        boardMembers = (data.members || []).map(m => ({ ...m, id: (m.id || '').toLowerCase() }));
 
         const noActiveSprint = data.hasActiveSprint === false;
         const boardHint = noActiveSprint
@@ -826,9 +826,10 @@ async function loadProjectMembers() {
     }
     
     try {
-        // Load members from API
+        // Load members from API and normalize IDs to lowercase for consistent avatar colors
         const members = await apiRequest(`/api/projects/${selectedProjectId}/members`);
-        project.members = members;
+        const normalizedMembers = (members || []).map(m => ({ ...m, id: (m.id || '').toLowerCase() }));
+        project.members = normalizedMembers;
         console.log('Loaded members:', members);
     } catch (error) {
         console.error('Error loading members:', error);
@@ -932,9 +933,10 @@ function renderMembersToAdd() {
     
     container.innerHTML = projectMembersToAdd.map((m, index) => {
         const initials = m.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+        const avatarColor = getUserColor(m.id || m.email || m.name || '');
         return `
             <div class="member-item">
-                <div class="member-avatar">${initials}</div>
+                <div class="member-avatar" style="background: ${avatarColor}; color: white;">${initials}</div>
                 <div class="member-info">
                     <div class="member-name">${escapeHtml(m.name)}</div>
                     <div class="member-email">${escapeHtml(m.email)}</div>
@@ -3532,9 +3534,10 @@ function getUserColor(userId) {
         '#84cc16', '#22c55e', '#10b981', '#14b8a6', '#06b6d4',
         '#0ea5e9', '#3b82f6', '#6366f1', '#4f46e5', '#7c3aed'
     ];
+    const idStr = (userId || '').toString().toLowerCase();
     let hash = 0;
-    for (let i = 0; i < userId.length; i++) {
-        hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+    for (let i = 0; i < idStr.length; i++) {
+        hash = ((hash << 5) - hash) + idStr.charCodeAt(i);
         hash = hash & hash;
     }
     return colors[Math.abs(hash) % colors.length];
@@ -3893,7 +3896,13 @@ function renderIssueSubtasks(tasks) {
                 }
                 const taskNum = task.id.length > 4 ? task.id.slice(-3) : task.id.substring(0, 3);
                 const taskKey = `${projectKey}-${taskNum}`;
-                const assignedMember = boardMembers.find(m => m.id === task.assignedToId);
+                let assignedMember = boardMembers.find(m => m.id === task.assignedToId);
+                // If the assigned user is not in boardMembers (e.g. different session),
+                // fallback to the assignedToName returned by the API so the UI still shows it.
+                const assignedNameFallback = task.assignedToName || task.assignedTo || '';
+                if (!assignedMember && task.assignedToId && assignedNameFallback) {
+                    assignedMember = { id: task.assignedToId, name: assignedNameFallback, email: '' };
+                }
                 const priorityLabels = { 0: 'Baja', 1: 'Media', 2: 'Alta', 3: 'Critica' };
                 const priorityColors = { 0: '#22c55e', 1: '#3b82f6', 2: '#f59e0b', 3: '#ef4444' };
                 const statusLabels = { Todo: 'POR HACER', InProgress: 'EN CURSO', Done: 'FINALIZADO' };
@@ -3912,11 +3921,11 @@ function renderIssueSubtasks(tasks) {
                         </div>
                         <div class="issue-assignee-picker" data-task-id="${task.id}">
                             <div class="issue-assignee-trigger" onclick="toggleIssueSubtaskAssigneePicker('${task.id}')">
-                                ${assignedMember 
+                                ${assignedMember && assignedMember.name
                                     ? `<span class="subtask-avatar assigned" style="background: ${getUserColor(assignedMember.id)} !important;">${getInitials(assignedMember.name)}</span>`
                                     : `<span class="subtask-avatar unassigned">?</span>`
                                 }
-                                <span>${assignedMember ? escapeHtml(assignedMember.name.substring(0, 15)) : 'Sin asignar'}</span>
+                                <span>${assignedMember && assignedMember.name ? escapeHtml((assignedMember.name||'').substring(0, 15)) : 'Sin asignar'}</span>
                             </div>
                             <div class="issue-assignee-menu" id="issue-assignee-menu-${task.id}" style="display: none;">
                                 <input type="text" placeholder="Buscar miembro..." oninput="filterIssueSubtaskAssigneePicker('${task.id}', this.value)" onclick="event.stopPropagation()">
@@ -4048,7 +4057,7 @@ async function createIssueSubtask() {
         if (assigneeId) {
             await apiRequest(`/api/tasks/${createdTask.id}/assign`, {
                 method: 'PATCH',
-                body: JSON.stringify(assigneeId)
+                body: { assignedToId: assigneeId }
             });
         }
 
@@ -4157,6 +4166,7 @@ function selectIssueSubtaskAssigneeFromPicker(taskId, assigneeId, buttonEl) {
 function closeAllIssueSubtaskAssigneePickers() {
     document.querySelectorAll('.issue-assignee-menu.open').forEach(menu => {
         menu.classList.remove('open');
+        menu.style.display = 'none';
     });
 }
 
@@ -4611,20 +4621,29 @@ function renderSubtaskDetail(task, taskKey) {
     const statusSelect = document.getElementById('subtask-status');
     if (statusSelect) statusSelect.value = task.status || 'Todo';
     
-    // Set assignee
+    // Set assignee (prefer project member info; fallback to API-assigned name so assignment remains visible)
     const assigneeDisplay = document.getElementById('subtask-assignee-display');
-    const assignedMember = boardMembers.find(m => m.id.toLowerCase() === task.assignedToId?.toLowerCase());
-    
-    if (assignedMember) {
-        assigneeDisplay.innerHTML = `
-            <span class="subtask-assignee-avatar" style="background: ${getUserColor(assignedMember.id)} !important;">${getInitials(assignedMember.name)}</span>
-            <span class="subtask-assignee-name">${escapeHtml(assignedMember.name)}</span>
-        `;
-    } else {
-        assigneeDisplay.innerHTML = `
-            <span class="subtask-assignee-avatar unassigned">?</span>
-            <span class="subtask-assignee-name">Sin asignar</span>
-        `;
+    let assignedMember = null;
+    if (task.assignedToId) {
+        assignedMember = boardMembers.find(m => (m.id || '').toLowerCase() === (task.assignedToId || '').toLowerCase());
+    }
+    // Fallback to the assignedToName returned by the API when member is not in boardMembers
+    if (!assignedMember && task.assignedToId && task.assignedToName) {
+        assignedMember = { id: task.assignedToId, name: task.assignedToName, email: '' };
+    }
+
+    if (assigneeDisplay) {
+        if (assignedMember && assignedMember.name) {
+            assigneeDisplay.innerHTML = `
+                <span class="subtask-assignee-avatar" style="background: ${getUserColor(assignedMember.id)} !important;">${getInitials(assignedMember.name)}</span>
+                <span class="subtask-assignee-name">${escapeHtml(assignedMember.name)}</span>
+            `;
+        } else {
+            assigneeDisplay.innerHTML = `
+                <span class="subtask-assignee-avatar unassigned">?</span>
+                <span class="subtask-assignee-name">Sin asignar</span>
+            `;
+        }
     }
     
     // Set parent story link
