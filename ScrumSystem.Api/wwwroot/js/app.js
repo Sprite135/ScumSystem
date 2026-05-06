@@ -4611,7 +4611,8 @@ function renderSubtaskDetail(task, taskKey) {
     
     // Set assignee
     const assigneeDisplay = document.getElementById('subtask-assignee-display');
-    const assignedMember = boardMembers.find(m => m.id === task.assignedToId);
+    const assignedMember = boardMembers.find(m => m.id.toLowerCase() === task.assignedToId?.toLowerCase());
+    
     if (assignedMember) {
         assigneeDisplay.innerHTML = `
             <span class="subtask-assignee-avatar" style="background: ${getUserColor(assignedMember.id)} !important;">${getInitials(assignedMember.name)}</span>
