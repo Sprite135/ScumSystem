@@ -24,13 +24,6 @@ document.addEventListener('DOMContentLoaded', () => {
             loadPage(pageName);
         }
     });
-    
-    // Load page from hash on initial load
-    const hash = window.location.hash.substring(1);
-    if (hash) {
-        const pageName = hash.split('/')[0];
-        setTimeout(() => loadPage(pageName), 100);
-    }
 });
 
 // ==================== AUTHENTICATION ====================
@@ -39,7 +32,12 @@ function checkAuth() {
     if (user) {
         currentUser = JSON.parse(user);
         showMainApp();
-        loadPage('welcome');
+        
+        // Load page based on hash or default to welcome
+        const hash = window.location.hash.substring(1);
+        const pageName = hash ? hash.split('/')[0] : 'welcome';
+        console.log('Loading page:', pageName, 'from hash:', hash);
+        loadPage(pageName);
     } else {
         window.location.href = 'login.html';
     }
@@ -211,7 +209,6 @@ function loadRecentProjects() {
         .slice(0, 6);
     
     recentProjectsGrid.innerHTML = recentProjects.map(project => {
-        const iconHtml = iconMap[project.icon] || iconMap['folder'];
         return `
             <div class="project-card-welcome" onclick="selectProject('${project.id}')">
                 <h4>${escapeHtml(project.name)}</h4>
@@ -404,7 +401,6 @@ async function loadProjects() {
     try {
         projects = await apiRequest(`/api/projects?userId=${currentUser.id}`);
         renderSidebarProjects();
-        renderProjects();
         populateProjectSelects();
     } catch (error) {
         console.error('Error loading projects:', error);
@@ -468,6 +464,21 @@ function renderSidebarProjects() {
     }).join('');
 }
 
+function toggleProjectMenu(projectId, projectName, isCreator) {
+    const menu = document.getElementById(`project-menu-${projectId}`);
+    if (!menu) return;
+    
+    // Close all other menus
+    document.querySelectorAll('.project-menu').forEach(m => {
+        if (m.id !== `project-menu-${projectId}`) {
+            m.style.display = 'none';
+        }
+    });
+    
+    // Toggle current menu
+    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+
 function selectProject(projectId) {
     selectedProjectId = projectId;
     renderSidebarProjects();
@@ -478,7 +489,7 @@ function selectProject(projectId) {
 
 let projectSubTab = 'backlog';
 
-function loadProjectView() {
+async function loadProjectView() {
     const mainContent = document.getElementById('main-content');
     if (!mainContent) return;
     
@@ -486,6 +497,14 @@ function loadProjectView() {
     const parts = hash.split('/');
     const projectId = parts[1];
     projectSubTab = parts[2] || 'backlog';
+    
+    // Ensure projects are loaded
+    if (!projects || projects.length === 0) {
+        await loadProjects();
+    }
+    
+    // Set selected project ID
+    selectedProjectId = projectId;
     
     const project = projects.find(p => p.id === projectId);
     if (!project) {
@@ -3365,15 +3384,33 @@ function createKanbanCard(story, members) {
     
     const extraMembers = members.length > 3 ? `<div class="member-avatar more" style="margin-left: -8px;">+${members.length - 3}</div>` : '';
     
+    // Generate story-key like in backlog
+    const project = projects.find(p => p.id === story.projectId);
+    let projectKey = 'PROJ';
+    if (project) {
+        if (project.key) {
+            projectKey = project.key;
+        } else {
+            const nameParts = project.name.split(' ');
+            if (nameParts.length > 1) {
+                projectKey = nameParts.map(p => p[0]).join('').toUpperCase().substring(0, 4);
+            } else {
+                projectKey = project.name.substring(0, 4).toUpperCase();
+            }
+        }
+    }
+    const storyNum = story.id.length > 4 ? story.id.slice(-3) : story.id.substring(0, 3);
+    const storyKey = `${projectKey}-${storyNum}`;
+    
     // Default priority to 2 (medium) if not set
     const priority = story.priority || 2;
     
     card.innerHTML = `
+        <div class="kanban-card-title">${escapeHtml(story.title)}</div>
         <div class="kanban-card-header">
-            <span class="kanban-card-id">#${story.id.substring(0, 8)}</span>
+            <span class="kanban-card-id">${storyKey}</span>
             <div class="kanban-card-priority priority-${priority}"></div>
         </div>
-        <div class="kanban-card-title">${escapeHtml(story.title)}</div>
         <div class="kanban-card-members">
             ${memberAvatars}${extraMembers}
         </div>
@@ -3397,7 +3434,7 @@ function createKanbanCard(story, members) {
     card.addEventListener('dragstart', (e) => {
         card.classList.add('dragging');
         const col = card.closest('.kanban-column');
-        const sourceColumnStatus = col?.getAttribute('data-status') || '';
+        const sourceColumnStatus = col ? col.getAttribute('data-status') || '' : '';
         e.dataTransfer.setData('storyId', story.id);
         e.dataTransfer.setData('sourceColumnStatus', sourceColumnStatus);
         e.dataTransfer.effectAllowed = 'move';
@@ -3721,10 +3758,30 @@ function renderIssueSubtasks(tasks) {
     const progressBar = document.getElementById('issue-subtask-progress-bar');
     const progressText = document.getElementById('issue-subtask-progress-text');
     const completed = tasks.filter(task => task.status === 'Done').length;
-    const percent = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
+    const inProgress = tasks.filter(task => task.status === 'InProgress').length;
+    const totalActive = completed + inProgress;
+    
+    // Calcular progreso: 50% para tareas en curso, 100% para finalizadas
+    let progressPercent = 0;
+    if (tasks.length > 0) {
+        const completedWeight = completed * 100;
+        const inProgressWeight = inProgress * 50;
+        progressPercent = Math.round((completedWeight + inProgressWeight) / tasks.length);
+    }
 
-    if (progressBar) progressBar.style.width = `${percent}%`;
-    if (progressText) progressText.textContent = `${percent} % completado`;
+    if (progressBar) {
+        progressBar.style.width = `${progressPercent}%`;
+        // Color según progreso
+        if (progressPercent === 0) {
+            progressBar.style.background = '#6b7280'; // gris para POR HACER
+        } else if (progressPercent === 100) {
+            progressBar.style.background = '#22c55e'; // verde para FINALIZADO
+        } else {
+            progressBar.style.background = '#3b82f6'; // azul para EN CURSO
+        }
+    }
+    
+    if (progressText) progressText.textContent = `${progressPercent}% completado`;
     if (!list) return;
 
     if (!tasks.length) {
@@ -3739,34 +3796,51 @@ function renderIssueSubtasks(tasks) {
                 <span>Prioridad</span>
                 <span>Persona asignada</span>
                 <span>Estado</span>
-                <span>Acciones</span>
             </div>
-            ${tasks.map(task => {
-                const taskKey = `PROYEC-${task.id.substring(0, 2).toUpperCase()}`;
+            ${tasks.map((task, index) => {
+                // Generate project-key like in kanban cards
+                const project = projects.find(p => p.id === currentIssueDetail.projectId);
+                let projectKey = 'PROJ';
+                if (project) {
+                    if (project.key) {
+                        projectKey = project.key;
+                    } else {
+                        const nameParts = project.name.split(' ');
+                        if (nameParts.length > 1) {
+                            projectKey = nameParts.map(p => p[0]).join('').toUpperCase().substring(0, 4);
+                        } else {
+                            projectKey = project.name.substring(0, 4).toUpperCase();
+                        }
+                    }
+                }
+                const taskNum = task.id.length > 4 ? task.id.slice(-3) : task.id.substring(0, 3);
+                const taskKey = `${projectKey}-${taskNum}`;
+                const assignedMember = boardMembers.find(m => m.id === task.assignedToId);
+                const priorityLabels = { 0: 'Baja', 1: 'Media', 2: 'Alta', 3: 'Critica' };
+                const priorityColors = { 0: '#22c55e', 1: '#3b82f6', 2: '#f59e0b', 3: '#ef4444' };
+                const statusLabels = { Todo: 'POR HACER', InProgress: 'EN CURSO', Done: 'FINALIZADO' };
+                const statusColors = { Todo: '#6b7280', InProgress: '#3b82f6', Done: '#22c55e' };
                 return `
                     <div class="issue-subtask-row" data-task-id="${task.id}">
                         <div class="issue-subtask-title">
-                            <i class="far fa-check-square"></i>
-                            <a href="#" onclick="event.preventDefault()">${taskKey}</a>
+                            <i class="fas fa-link"></i>
+                            <a href="#" onclick="openSubtaskDetail('${task.id}', '${taskKey}'); return false;" class="subtask-key-link" title="Ver detalle de ${taskKey}">${taskKey}</a>
                             <input type="text" value="${escapeHtml(task.title)}" maxlength="255"
                                 onchange="updateIssueSubtaskDetails('${task.id}')"
                                 onblur="updateIssueSubtaskDetails('${task.id}')">
                         </div>
-                        <select id="issue-subtask-priority-${task.id}" onchange="updateIssueSubtaskDetails('${task.id}')">
-                            <option value="0" ${Number(task.priority ?? 1) === 0 ? 'selected' : ''}>Baja</option>
-                            <option value="1" ${Number(task.priority ?? 1) === 1 ? 'selected' : ''}>Media</option>
-                            <option value="2" ${Number(task.priority ?? 1) === 2 ? 'selected' : ''}>Alta</option>
-                            <option value="3" ${Number(task.priority ?? 1) === 3 ? 'selected' : ''}>Critica</option>
-                        </select>
+                        <div class="issue-priority-badge" style="color: ${priorityColors[task.priority ?? 1]}">
+                            <i class="fas fa-equals" style="margin-right: 4px;"></i>${priorityLabels[task.priority ?? 1]}
+                        </div>
                         <div class="issue-assignee-picker" data-task-id="${task.id}">
-                            ${(() => {
-                                const assignedMember = boardMembers.find(m => m.id === task.assignedToId);
-                                const initials = assignedMember ? getInitials(assignedMember.name) : '?';
-                                const avatarClass = assignedMember ? 'subtask-avatar assigned' : 'subtask-avatar unassigned';
-                                const title = assignedMember ? `${escapeHtml(assignedMember.name)} - Click para reasignar` : 'Sin asignar - Click para asignar';
-                                return `<div class="${avatarClass}" onclick="toggleIssueSubtaskAssigneePicker('${task.id}')" title="${title}">${initials}</div>`;
-                            })()}
-                            <div class="issue-assignee-menu" id="issue-assignee-menu-${task.id}">
+                            <div class="issue-assignee-trigger" onclick="toggleIssueSubtaskAssigneePicker('${task.id}')">
+                                ${assignedMember 
+                                    ? `<span class="subtask-avatar assigned" style="background: ${getUserColor(assignedMember.id)} !important;">${getInitials(assignedMember.name)}</span>`
+                                    : `<span class="subtask-avatar unassigned">?</span>`
+                                }
+                                <span>${assignedMember ? escapeHtml(assignedMember.name.substring(0, 15)) : 'Sin asignar'}</span>
+                            </div>
+                            <div class="issue-assignee-menu" id="issue-assignee-menu-${task.id}" style="display: none;">
                                 <input type="text" placeholder="Buscar miembro..." oninput="filterIssueSubtaskAssigneePicker('${task.id}', this.value)" onclick="event.stopPropagation()">
                                 <button type="button" class="issue-assignee-option" data-member-name="Sin asignar" onclick="selectIssueSubtaskAssigneeFromPicker('${task.id}', '', this)">
                                     <span class="issue-assignee-option-main">
@@ -3778,7 +3852,7 @@ function renderIssueSubtasks(tasks) {
                                 ${boardMembers.map(member => `
                                     <button type="button" class="issue-assignee-option" data-member-name="${escapeHtml(member.name)}" onclick="selectIssueSubtaskAssigneeFromPicker('${task.id}', '${member.id}', this)">
                                         <span class="issue-assignee-option-main">
-                                            <span class="issue-assignee-option-avatar assigned">${escapeHtml(getInitials(member.name || 'U'))}</span>
+                                            <span class="issue-assignee-option-avatar assigned" style="background: ${getUserColor(member.id)} !important;">${escapeHtml(getInitials(member.name || 'U'))}</span>
                                             <span>${escapeHtml(member.name)}</span>
                                         </span>
                                         <span class="issue-assignee-option-email">${escapeHtml(member.email || '')}</span>
@@ -3786,16 +3860,13 @@ function renderIssueSubtasks(tasks) {
                                 `).join('')}
                             </div>
                         </div>
-                        <select onchange="updateIssueSubtaskStatus('${task.id}', this.value)">
-                            <option value="Todo" ${task.status === 'Todo' ? 'selected' : ''}>TAREAS POR HACER</option>
-                            <option value="InProgress" ${task.status === 'InProgress' ? 'selected' : ''}>EN CURSO</option>
-                            <option value="Done" ${task.status === 'Done' ? 'selected' : ''}>HECHO</option>
-                            <option value="Blocked" ${task.status === 'Blocked' ? 'selected' : ''}>BLOQUEADO</option>
-                        </select>
-                        <div class="issue-subtask-actions">
-                            <button type="button" class="btn btn-icon btn-small text-danger" onclick="deleteIssueSubtask('${task.id}')" title="Eliminar subtarea">
-                                <i class="fas fa-trash"></i>
-                            </button>
+                        <div class="issue-status-badge-wrapper">
+                            <select class="issue-status-badge" onchange="updateIssueSubtaskStatus('${task.id}', this.value)" 
+                                style="background-color: ${statusColors[task.status]}20; color: ${statusColors[task.status]}; border-color: ${statusColors[task.status]}40;">
+                                <option value="Todo" ${task.status === 'Todo' ? 'selected' : ''} style="background: #2d2d3a;">POR HACER</option>
+                                <option value="InProgress" ${task.status === 'InProgress' ? 'selected' : ''} style="background: #2d2d3a;">EN CURSO</option>
+                                <option value="Done" ${task.status === 'Done' ? 'selected' : ''} style="background: #2d2d3a;">FINALIZADO</option>
+                            </select>
                         </div>
                     </div>
                 `;
@@ -3829,8 +3900,23 @@ async function saveIssueDetail() {
             method: 'PUT',
             body: JSON.stringify(data)
         });
-        currentIssueDetail = story;
-        renderIssueDetail(story);
+        
+        // Preservar las subtareas existentes al actualizar los datos principales
+        if (story && currentIssueDetail) {
+            // Actualizar solo los campos principales, mantener las subtareas
+            Object.assign(currentIssueDetail, {
+                title: story.title,
+                description: story.description,
+                acceptanceCriteria: story.acceptanceCriteria,
+                storyPoints: story.storyPoints,
+                priority: story.priority,
+                assigneeId: story.assigneeId,
+                status: story.status,
+                assigneeName: story.assigneeName
+            });
+        }
+        
+        renderIssueDetail(currentIssueDetail);
         refreshCurrentBoardView();
         showToast('Actividad actualizada');
     } catch (error) {
@@ -3911,20 +3997,32 @@ function toggleIssueSubtaskAssigneePicker(taskId) {
     const menu = document.getElementById(`issue-assignee-menu-${taskId}`);
     if (!menu) return;
     const isOpen = menu.classList.contains('open');
-    closeAllIssueSubtaskAssigneePickers();
+    
+    // Close all other menus
+    document.querySelectorAll('.issue-assignee-menu.open').forEach(m => m.classList.remove('open'));
+    
+    // Toggle current menu
     if (!isOpen) {
         menu.classList.add('open');
+        menu.style.display = 'block';
+        // Focus search input
         const search = menu.querySelector('input');
         if (search) {
             search.value = '';
             filterIssueSubtaskAssigneePicker(taskId, '');
             search.focus();
         }
+    } else {
+        menu.classList.remove('open');
+        menu.style.display = 'none';
     }
 }
 
 function closeAllIssueSubtaskAssigneePickers() {
-    document.querySelectorAll('.issue-assignee-menu.open').forEach(menu => menu.classList.remove('open'));
+    document.querySelectorAll('.issue-assignee-menu.open').forEach(menu => {
+        menu.classList.remove('open');
+        menu.style.display = 'none';
+    });
 }
 
 function filterIssueSubtaskAssigneePicker(taskId, query) {
@@ -3939,16 +4037,79 @@ function filterIssueSubtaskAssigneePicker(taskId, query) {
 
 function selectIssueSubtaskAssigneeFromPicker(taskId, assigneeId, buttonEl) {
     const row = document.querySelector(`.issue-subtask-row[data-task-id="${taskId}"]`);
-    const triggerLabel = row?.querySelector('.issue-assignee-trigger span');
-    if (triggerLabel) {
+    const trigger = row?.querySelector('.issue-assignee-trigger');
+    const triggerLabel = trigger?.querySelector('span:last-child');
+    const avatar = trigger?.querySelector('.subtask-avatar');
+    
+    if (triggerLabel && avatar && buttonEl) {
         const selectedName = buttonEl?.dataset?.memberName || 'Sin asignar';
-        const selectedRole = buttonEl?.querySelector('.issue-assignee-option-role')?.textContent || '';
-        triggerLabel.textContent = selectedRole && selectedName !== 'Sin asignar'
-            ? `${selectedName} (${selectedRole})`
-            : selectedName;
+        const member = boardMembers.find(m => m.id === assigneeId);
+        
+        triggerLabel.textContent = selectedName;
+        
+        if (member) {
+            avatar.textContent = getInitials(member.name);
+            avatar.className = 'subtask-avatar assigned';
+            avatar.style.background = getUserColor(member.id) + ' !important';
+        } else {
+            avatar.textContent = '?';
+            avatar.className = 'subtask-avatar unassigned';
+            avatar.style.background = '';
+        }
     }
+    
     closeAllIssueSubtaskAssigneePickers();
     updateIssueSubtaskAssignee(taskId, assigneeId);
+}
+
+function closeAllIssueSubtaskAssigneePickers() {
+    document.querySelectorAll('.issue-assignee-menu.open').forEach(menu => {
+        menu.classList.remove('open');
+    });
+}
+
+async function createIssueSubtask() {
+    if (!currentIssueDetail) return;
+    
+    const titleInput = document.getElementById('issue-new-subtask-title');
+    const prioritySelect = document.getElementById('issue-new-subtask-priority');
+    const assigneeInput = document.getElementById('issue-new-subtask-assignee');
+    
+    const title = titleInput?.value?.trim();
+    if (!title) {
+        showToast('El titulo de la subtarea es obligatorio', 'error');
+        if (titleInput) titleInput.focus();
+        return;
+    }
+    
+    const priority = parseInt(prioritySelect?.value ?? 1);
+    const assigneeName = assigneeInput?.value?.trim();
+    const assignee = assigneeName ? boardMembers.find(m => m.name === assigneeName) : null;
+    
+    try {
+        await apiRequest('/api/tasks', {
+            method: 'POST',
+            body: JSON.stringify({
+                storyId: currentIssueDetail.id,
+                title,
+                priority,
+                assignedToId: assignee?.id || ''
+            })
+        });
+        
+        // Clear inputs
+        if (titleInput) titleInput.value = '';
+        if (prioritySelect) prioritySelect.value = '1';
+        if (assigneeInput) assigneeInput.value = '';
+        
+        // Refresh story data
+        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
+        currentIssueDetail = story;
+        renderIssueDetail(story);
+        showToast('Subtarea creada');
+    } catch (error) {
+        showToast('Error al crear subtarea', 'error');
+    }
 }
 
 async function updateIssueSubtaskDetails(taskId) {
@@ -4006,7 +4167,7 @@ async function updateIssueSubtaskAssignee(taskId, assigneeId) {
     try {
         await apiRequest(`/api/tasks/${taskId}/assign`, {
             method: 'PATCH',
-            body: JSON.stringify(assigneeId || '')
+            body: JSON.stringify({ assignedToId: assigneeId || '' })
         });
         const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
         currentIssueDetail = story;
@@ -4088,8 +4249,40 @@ function getScrumRoleLabel(role) {
     return map[key] || key;
 }
 
-document.addEventListener('click', (event) => {
-    if (!event.target.closest('.issue-assignee-picker')) {
+// Event listener global para cerrar menús al hacer click fuera
+document.addEventListener('click', function(event) {
+    const target = event.target;
+    
+    // Verificar si se hizo click dentro de un menú de asignación abierto
+    const clickedInsideMenu = target.closest('.issue-assignee-menu.open');
+    
+    // Verificar si se hizo click dentro de un trigger de asignación
+    const clickedInsideTrigger = target.closest('.issue-assignee-trigger');
+    
+    // Verificar si se hizo click dentro de las opciones del menú
+    const clickedInsideOption = target.closest('.issue-assignee-option');
+    
+    // Solo cerrar si se hace click fuera del menú, trigger y opciones
+    if (!clickedInsideMenu && !clickedInsideTrigger && !clickedInsideOption) {
+        closeAllIssueSubtaskAssigneePickers();
+    }
+});
+
+// Prevenir que el menú se cierre cuando el cursor pasa sobre él
+document.addEventListener('mouseover', function(event) {
+    const target = event.target;
+    const menu = target.closest('.issue-assignee-menu');
+    
+    if (menu) {
+        // Asegurar que el menú permanezca opaco
+        menu.style.background = '#1d1738';
+        menu.style.opacity = '1';
+    }
+});
+
+// Cerrar menús al presionar Escape
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
         closeAllIssueSubtaskAssigneePickers();
     }
 });
@@ -4169,5 +4362,1453 @@ function showToast(message, type = 'success') {
         toast.textContent = message;
         toast.className = `toast ${type} show`;
         setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+}
+
+// ==================== SUBTASK DETAIL ====================
+let currentSubtaskDetail = null;
+
+async function openSubtaskDetail(taskId, taskKey) {
+    // Show loading state
+    const loading = document.getElementById('subtask-detail-loading');
+    const body = document.getElementById('subtask-detail-body');
+    if (loading) loading.style.display = 'flex';
+    if (body) body.style.display = 'none';
+    
+    // Show modal
+    showModal('subtask-detail-modal');
+    
+    try {
+        // Find the task in current issue's subtasks
+        const task = currentIssueDetail?.subtasks?.find(st => st.id === taskId);
+        
+        if (!task) {
+            // If not found locally, fetch from API
+            const fetchedTask = await apiRequest(`/api/tasks/${taskId}`);
+            currentSubtaskDetail = fetchedTask;
+        } else {
+            currentSubtaskDetail = task;
+        }
+        
+        renderSubtaskDetail(currentSubtaskDetail, taskKey);
+    } catch (error) {
+        console.error('Error loading subtask:', error);
+        hideModal('subtask-detail-modal');
+        showToast('Error al cargar la subtarea', 'error');
+    }
+}
+
+function renderSubtaskDetail(task, taskKey) {
+    const loading = document.getElementById('subtask-detail-loading');
+    const body = document.getElementById('subtask-detail-body');
+    
+    // Get parent story info
+    const parentStory = currentIssueDetail;
+    const parentKey = document.getElementById('issue-detail-key')?.textContent || 'PROJ-000';
+    
+    // Set breadcrumbs
+    document.getElementById('subtask-parent-key').textContent = parentKey;
+    document.getElementById('subtask-key').textContent = taskKey;
+    
+    // Set title
+    document.getElementById('subtask-title').textContent = task.title || 'Sin título';
+    
+    // Set description
+    const descEl = document.getElementById('subtask-description');
+    if (task.description) {
+        descEl.innerHTML = task.description;
+    } else {
+        descEl.innerHTML = '<p class="placeholder-text">Agrega una descripción más detallada...</p>';
+    }
+    
+    // Reset toolbar more options
+    const moreOptions = document.getElementById('toolbar-more-options');
+    if (moreOptions) moreOptions.style.display = 'none';
+    
+    // Set status
+    const statusSelect = document.getElementById('subtask-status');
+    if (statusSelect) statusSelect.value = task.status || 'Todo';
+    
+    // Set assignee
+    const assigneeDisplay = document.getElementById('subtask-assignee-display');
+    const assignedMember = boardMembers.find(m => m.id === task.assignedToId);
+    if (assignedMember) {
+        assigneeDisplay.innerHTML = `
+            <span class="subtask-assignee-avatar" style="background: ${getUserColor(assignedMember.id)} !important;">${getInitials(assignedMember.name)}</span>
+            <span class="subtask-assignee-name">${escapeHtml(assignedMember.name)}</span>
+        `;
+    } else {
+        assigneeDisplay.innerHTML = `
+            <span class="subtask-assignee-avatar unassigned">?</span>
+            <span class="subtask-assignee-name">Sin asignar</span>
+        `;
+    }
+    
+    // Set parent story link
+    const parentLink = document.getElementById('subtask-parent-link');
+    const parentTitle = document.getElementById('subtask-parent-title');
+    if (parentLink && parentStory) {
+        parentLink.onclick = () => {
+            closeSubtaskDetail();
+            // Parent is already open, just close this modal
+            return false;
+        };
+        parentTitle.textContent = parentStory.title || 'Historia padre';
+    }
+    
+    // Set sprint info
+    const sprintEl = document.getElementById('subtask-sprint');
+    if (sprintEl && parentStory) {
+        const sprint = sprints.find(s => s.id === parentStory.sprintId);
+        sprintEl.textContent = sprint?.name || 'Sin sprint';
+    }
+    
+    // Set reporter (use current user or task creator)
+    const reporterEl = document.getElementById('subtask-reporter');
+    const reporterName = currentUser?.name || 'Usuario';
+    const reporterInitials = getInitials(reporterName);
+    if (reporterEl) {
+        reporterEl.innerHTML = `
+            <span class="subtask-reporter-avatar">${reporterInitials}</span>
+            <span class="subtask-reporter-name">${escapeHtml(reporterName)}</span>
+        `;
+    }
+    
+    // Set current user avatar
+    const userAvatar = document.getElementById('subtask-current-user-avatar');
+    if (userAvatar) {
+        userAvatar.textContent = reporterInitials;
+    }
+    
+    // Hide loading, show body
+    if (loading) loading.style.display = 'none';
+    if (body) body.style.display = 'grid';
+}
+
+function closeSubtaskDetail() {
+    hideModal('subtask-detail-modal');
+    currentSubtaskDetail = null;
+}
+
+function editSubtask() {
+    if (!currentSubtaskDetail) return;
+    // TODO: Implement edit functionality
+    showToast('Función de edición en desarrollo', 'info');
+}
+
+async function updateSubtaskStatus(status) {
+    if (!currentSubtaskDetail) return;
+    
+    try {
+        await apiRequest(`/api/tasks/${currentSubtaskDetail.id}/status`, 'PUT', { status });
+        currentSubtaskDetail.status = status;
+        showToast('Estado actualizado', 'success');
+        
+        // Refresh parent issue detail if open
+        if (currentIssueDetail) {
+            renderIssueSubtasks(currentIssueDetail.subtasks || []);
+        }
+    } catch (error) {
+        showToast('Error al actualizar estado', 'error');
+    }
+}
+
+async function assignSubtaskToMe() {
+    if (!currentSubtaskDetail || !currentUser) return;
+    
+    try {
+        await apiRequest(`/api/tasks/${currentSubtaskDetail.id}/assign`, 'PUT', { 
+            assignedToId: currentUser.id 
+        });
+        currentSubtaskDetail.assignedToId = currentUser.id;
+        
+        // Update display
+        const assigneeDisplay = document.getElementById('subtask-assignee-display');
+        assigneeDisplay.innerHTML = `
+            <span class="subtask-assignee-avatar" style="background: ${getUserColor(currentUser.id)} !important;">${getInitials(currentUser.name)}</span>
+            <span class="subtask-assignee-name">${escapeHtml(currentUser.name)}</span>
+        `;
+        
+        showToast('Te has asignado la subtarea', 'success');
+        
+        // Refresh parent issue detail if open
+        if (currentIssueDetail) {
+            renderIssueSubtasks(currentIssueDetail.subtasks || []);
+        }
+    } catch (error) {
+        showToast('Error al asignar subtarea', 'error');
+    }
+}
+
+async function addSubtaskComment() {
+    const commentInput = document.getElementById('subtask-new-comment');
+    const content = commentInput?.value?.trim();
+    
+    if (!content) {
+        showToast('Escribe un comentario primero', 'warning');
+        return;
+    }
+    
+    if (!currentSubtaskDetail) return;
+    
+    try {
+        // TODO: Implement comment API endpoint
+        showToast('Comentario agregado', 'success');
+        commentInput.value = '';
+        
+        // Add comment to list (temporary until API is ready)
+        const commentsList = document.getElementById('subtask-comments-list');
+        const commentEl = document.createElement('div');
+        commentEl.className = 'subtask-comment';
+        commentEl.innerHTML = `
+            <div class="subtask-comment-header">
+                <span class="subtask-comment-author">${escapeHtml(currentUser?.name || 'Usuario')}</span>
+                <span class="subtask-comment-time">Ahora</span>
+            </div>
+            <div class="subtask-comment-content">${escapeHtml(content)}</div>
+        `;
+        commentsList.prepend(commentEl);
+    } catch (error) {
+        showToast('Error al agregar comentario', 'error');
+    }
+}
+
+function configureSubtask() {
+    showToast('Configuración en desarrollo', 'info');
+}
+
+// Close subtask modal on Escape key
+document.addEventListener('keydown', function(event) {
+    const modal = document.getElementById('subtask-detail-modal');
+    if (event.key === 'Escape' && modal?.classList.contains('active')) {
+        closeSubtaskDetail();
+    }
+});
+
+// ==================== RICH TEXT EDITOR FUNCTIONS ====================
+function formatSubtaskText(command, value = null) {
+    const editor = document.getElementById('subtask-description');
+    if (!editor) return;
+    
+    editor.focus();
+    
+    try {
+        document.execCommand(command, false, value);
+    } catch (e) {
+        console.error('Error formatting text:', e);
+    }
+    
+    // Remove placeholder text if present
+    const placeholder = editor.querySelector('.placeholder-text');
+    if (placeholder && editor.textContent.trim().length > 0) {
+        placeholder.remove();
+    }
+}
+
+function toggleMoreToolbarOptions() {
+    const moreOptions = document.getElementById('toolbar-more-options');
+    if (moreOptions) {
+        moreOptions.style.display = moreOptions.style.display === 'none' ? 'flex' : 'none';
+    }
+}
+
+function insertSubtaskCheckbox() {
+    const editor = document.getElementById('subtask-description');
+    if (!editor) return;
+    
+    editor.focus();
+    
+    const checkboxHtml = '<input type="checkbox" disabled style="margin-right: 8px; accent-color: #8b5cf6;"> ';
+    document.execCommand('insertHTML', false, checkboxHtml);
+}
+
+function insertSubtaskLink() {
+    const editor = document.getElementById('subtask-description');
+    if (!editor) return;
+    
+    // Create modal for link insertion
+    const modal = document.createElement('div');
+    modal.className = 'subtask-link-modal';
+    modal.innerHTML = `
+        <div class="subtask-link-modal-content">
+            <div class="subtask-link-modal-header">
+                <h3><i class="fas fa-link"></i> Insertar Enlace</h3>
+                <button class="subtask-link-modal-close" onclick="this.closest('.subtask-link-modal').remove()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="subtask-link-modal-body">
+                <div class="form-group">
+                    <label for="link-url">URL del enlace:</label>
+                    <input type="url" id="link-url" placeholder="https://ejemplo.com" value="https://">
+                </div>
+                <div class="form-group">
+                    <label for="link-text">Texto del enlace:</label>
+                    <input type="text" id="link-text" placeholder="Texto que se mostrará">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="link-new-tab" checked>
+                        Abrir en nueva pestaña
+                    </label>
+                </div>
+            </div>
+            <div class="subtask-link-modal-footer">
+                <button class="btn btn-secondary" onclick="this.closest('.subtask-link-modal').remove()">Cancelar</button>
+                <button class="btn btn-primary" onclick="insertLinkFromModal(this)">Insertar Enlace</button>
+            </div>
+        </div>
+    `;
+    
+    // Get selected text
+    const selection = window.getSelection();
+    const selectedText = selection.toString();
+    if (selectedText) {
+        modal.querySelector('#link-text').value = selectedText;
+    }
+    
+    document.body.appendChild(modal);
+    
+    // Focus URL input
+    setTimeout(() => {
+        modal.querySelector('#link-url').focus();
+        modal.querySelector('#link-url').select();
+    }, 100);
+    
+    // Handle Enter key
+    modal.querySelector('#link-url').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            insertLinkFromModal(modal.querySelector('.btn-primary'));
+        }
+    });
+    
+    modal.querySelector('#link-text').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            insertLinkFromModal(modal.querySelector('.btn-primary'));
+        }
+    });
+}
+
+function insertLinkFromModal(button) {
+    const modal = button.closest('.subtask-link-modal');
+    const url = modal.querySelector('#link-url').value.trim();
+    const text = modal.querySelector('#link-text').value.trim() || url;
+    const newTab = modal.querySelector('#link-new-tab').checked;
+    
+    if (!url || url === 'https://') {
+        modal.querySelector('#link-url').focus();
+        return;
+    }
+    
+    // Validate URL
+    try {
+        new URL(url);
+    } catch {
+        alert('Por favor, ingresa una URL válida.');
+        modal.querySelector('#link-url').focus();
+        return;
+    }
+    
+    const editor = document.getElementById('subtask-description');
+    const target = newTab ? ' target="_blank" rel="noopener noreferrer"' : '';
+    const linkHtml = `<a href="${escapeHtml(url)}"${target}>${escapeHtml(text)}</a>`;
+    
+    document.execCommand('insertHTML', false, linkHtml);
+    modal.remove();
+    
+    // Trigger auto-save
+    if (window.autoSaveTimeout) {
+        clearTimeout(window.autoSaveTimeout);
+    }
+    window.autoSaveTimeout = setTimeout(saveSubtaskDescription, 2000);
+}
+
+function insertSubtaskImage() {
+    const editor = document.getElementById('subtask-description');
+    if (!editor) return;
+    
+    // Create modal for file upload
+    const modal = document.createElement('div');
+    modal.className = 'subtask-image-modal';
+    modal.innerHTML = `
+        <div class="subtask-image-modal-content">
+            <div class="subtask-image-modal-header">
+                <h3><i class="fas fa-image"></i> Insertar Archivo/Imagen</h3>
+                <button class="subtask-image-modal-close" onclick="this.closest('.subtask-image-modal').remove()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="subtask-image-modal-body">
+                <div class="form-group">
+                    <label for="file-upload">Seleccionar archivo:</label>
+                    <div class="file-upload-area" id="file-upload-area">
+                        <input type="file" id="file-upload" accept="image/*,.xlsx,.xls,.doc,.docx,.pdf,.txt,.csv" style="display: none;">
+                        <div class="file-upload-dropzone" id="file-dropzone">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                            <p>Arrastra un archivo aquí o haz click para seleccionar</p>
+                            <small>Imágenes, Excel, Word, PDF, TXT, CSV</small>
+                        </div>
+                        <div class="file-preview" id="file-preview" style="display: none;">
+                            <div class="file-preview-content">
+                                <div class="file-preview-icon" id="file-preview-icon"></div>
+                                <div class="file-preview-info">
+                                    <div class="file-name" id="file-name"></div>
+                                    <div class="file-size" id="file-size"></div>
+                                </div>
+                                <button class="file-remove" onclick="removeSelectedFile()" title="Quitar archivo">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="file-alt">Texto alternativo/descripción:</label>
+                    <input type="text" id="file-alt" placeholder="Descripción del archivo (opcional)">
+                </div>
+                <div class="form-group">
+                    <label for="file-size-option">Tamaño (solo para imágenes):</label>
+                    <select id="file-size-option">
+                        <option value="small">Pequeña</option>
+                        <option value="medium" selected>Mediana</option>
+                        <option value="large">Grande</option>
+                        <option value="original">Tamaño original</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="file-align">Alineación:</label>
+                    <select id="file-align">
+                        <option value="none" selected>Ninguna</option>
+                        <option value="left">Izquierda</option>
+                        <option value="center">Centro</option>
+                        <option value="right">Derecha</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="file-border" checked>
+                        Agregar borde (solo para imágenes)
+                    </label>
+                </div>
+            </div>
+            <div class="subtask-image-modal-footer">
+                <button class="btn btn-secondary" onclick="this.closest('.subtask-image-modal').remove()">Cancelar</button>
+                <button class="btn btn-primary" onclick="insertFileFromModal(this)" id="insert-file-btn" disabled>Insertar Archivo</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Setup file upload handlers
+    const fileInput = modal.querySelector('#file-upload');
+    const dropzone = modal.querySelector('#file-dropzone');
+    const uploadArea = modal.querySelector('#file-upload-area');
+    
+    // Click to select file
+    dropzone.addEventListener('click', () => fileInput.click());
+    
+    // File selection
+    fileInput.addEventListener('change', handleFileSelection);
+    
+    // Drag and drop
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('drag-over');
+    });
+    
+    uploadArea.addEventListener('dragleave', () => {
+        uploadArea.classList.remove('drag-over');
+    });
+    
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('drag-over');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            fileInput.files = files;
+            handleFileSelection({ target: fileInput });
+        }
+    });
+}
+
+function handleFileSelection(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const modal = document.querySelector('.subtask-image-modal');
+    const dropzone = modal.querySelector('#file-dropzone');
+    const preview = modal.querySelector('#file-preview');
+    const fileName = modal.querySelector('#file-name');
+    const fileSize = modal.querySelector('#file-size');
+    const fileIcon = modal.querySelector('#file-preview-icon');
+    const insertBtn = modal.querySelector('#insert-file-btn');
+    
+    // Show file info
+    fileName.textContent = file.name;
+    fileSize.textContent = formatFileSize(file.size);
+    
+    // Set appropriate icon
+    const icon = getFileIcon(file.type);
+    fileIcon.innerHTML = `<i class="fas ${icon}"></i>`;
+    
+    // If it's an image, show preview
+    if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            fileIcon.innerHTML = `<img src="${e.target.result}" alt="Preview" style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;">`;
+        };
+        reader.readAsDataURL(file);
+    }
+    
+    // Show preview, hide dropzone
+    dropzone.style.display = 'none';
+    preview.style.display = 'block';
+    
+    // Enable insert button
+    insertBtn.disabled = false;
+}
+
+function removeSelectedFile() {
+    const modal = document.querySelector('.subtask-image-modal');
+    const fileInput = modal.querySelector('#file-upload');
+    const dropzone = modal.querySelector('#file-dropzone');
+    const preview = modal.querySelector('#file-preview');
+    const insertBtn = modal.querySelector('#insert-file-btn');
+    
+    // Reset file input
+    fileInput.value = '';
+    
+    // Show dropzone, hide preview
+    dropzone.style.display = 'block';
+    preview.style.display = 'none';
+    
+    // Disable insert button
+    insertBtn.disabled = true;
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function getFileIcon(fileType) {
+    if (fileType.startsWith('image/')) return 'fa-image';
+    if (fileType.includes('excel') || fileType.includes('spreadsheet')) return 'fa-file-excel';
+    if (fileType.includes('word') || fileType.includes('document')) return 'fa-file-word';
+    if (fileType.includes('pdf')) return 'fa-file-pdf';
+    if (fileType.includes('text')) return 'fa-file-alt';
+    if (fileType.includes('csv')) return 'fa-file-csv';
+    return 'fa-file';
+}
+
+function insertFileFromModal(button) {
+    const modal = button.closest('.subtask-image-modal');
+    const fileInput = modal.querySelector('#file-upload');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        alert('Por favor, selecciona un archivo.');
+        return;
+    }
+    
+    const alt = modal.querySelector('#file-alt').value.trim() || file.name;
+    const size = modal.querySelector('#file-size-option').value;
+    const align = modal.querySelector('#file-align').value;
+    const border = modal.querySelector('#file-border').checked;
+    
+    // Read file as data URL
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const dataUrl = e.target.result;
+        
+        if (file.type.startsWith('image/')) {
+            // Handle image file
+            insertImageFromFile(dataUrl, alt, size, align, border);
+        } else {
+            // Handle other file types
+            insertFileAsLink(file, dataUrl, alt);
+        }
+        
+        modal.remove();
+        
+        // Trigger auto-save
+        if (window.autoSaveTimeout) {
+            clearTimeout(window.autoSaveTimeout);
+        }
+        window.autoSaveTimeout = setTimeout(saveSubtaskDescription, 2000);
+    };
+    
+    reader.readAsDataURL(file);
+}
+
+function insertImageFromFile(dataUrl, alt, size, align, border) {
+    const editor = document.getElementById('subtask-description');
+    if (!editor) {
+        console.error('Editor not found');
+        return;
+    }
+    
+    console.log('Inserting image:', { dataUrl: dataUrl.substring(0, 50) + '...', alt, size, align, border });
+    
+    // Remove placeholder text if exists
+    const placeholder = editor.querySelector('.placeholder-text');
+    if (placeholder) {
+        placeholder.remove();
+    }
+    
+    // Clear editor if it only has placeholder
+    if (editor.textContent.trim() === 'Agrega una descripción más detallada...' || 
+        editor.innerHTML.trim() === '<p class="placeholder-text">Agrega una descripción más detallada...</p>') {
+        editor.innerHTML = '';
+    }
+    
+    // Build style based on options
+    let style = 'max-width: 100%; border-radius: 4px; display: inline-block; visibility: visible !important; opacity: 1 !important;';
+    
+    switch (size) {
+        case 'small':
+            style += ' width: 200px; height: auto;';
+            break;
+        case 'medium':
+            style += ' width: 400px; height: auto;';
+            break;
+        case 'large':
+            style += ' width: 600px; height: auto;';
+            break;
+        case 'original':
+            style += ' width: auto; height: auto;';
+            break;
+    }
+    const imageId = 'img-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    
+    // Create image element directly
+    const img = document.createElement('img');
+    img.src = dataUrl;
+    img.alt = alt;
+    img.style.maxWidth = '100%';
+    img.style.height = 'auto';
+    img.style.borderRadius = '8px';
+    img.style.cursor = 'pointer';
+    img.setAttribute('data-image-id', imageId);
+    
+    // Create wrapper div
+    const wrapper = document.createElement('div');
+    wrapper.style.margin = '8px 0';
+    wrapper.style.position = 'relative';
+    wrapper.style.display = 'inline-block';
+    wrapper.setAttribute('data-image-id', imageId);
+    wrapper.className = 'simple-image-wrapper';
+    
+    // Create controls container
+    const controls = document.createElement('div');
+    controls.style.position = 'absolute';
+    controls.style.top = '8px';
+    controls.style.right = '8px';
+    controls.style.display = 'flex';
+    controls.style.gap = '4px';
+    controls.style.opacity = '0';
+    controls.style.transition = 'opacity 0.2s ease';
+    controls.className = 'simple-image-controls';
+    
+    // Create view button
+    const viewBtn = document.createElement('button');
+    viewBtn.innerHTML = '<i class="fas fa-expand"></i>';
+    viewBtn.style.background = 'rgba(0,0,0,0.7)';
+    viewBtn.style.color = 'white';
+    viewBtn.style.border = 'none';
+    viewBtn.style.borderRadius = '4px';
+    viewBtn.style.padding = '6px';
+    viewBtn.style.cursor = 'pointer';
+    viewBtn.style.fontSize = '12px';
+    viewBtn.title = 'Ver imagen';
+    viewBtn.onclick = () => viewImageModal(dataUrl, alt);
+    
+    // Create delete button
+    const deleteBtn = document.createElement('button');
+    deleteBtn.innerHTML = '<i class="fas fa-trash"></i>';
+    deleteBtn.style.background = 'rgba(239,68,68,0.9)';
+    deleteBtn.style.color = 'white';
+    deleteBtn.style.border = 'none';
+    deleteBtn.style.borderRadius = '4px';
+    deleteBtn.style.padding = '6px';
+    deleteBtn.style.cursor = 'pointer';
+    deleteBtn.style.fontSize = '12px';
+    deleteBtn.title = 'Eliminar imagen';
+    deleteBtn.onclick = () => removeSimpleImage(imageId);
+    
+    // Assemble the components
+    controls.appendChild(viewBtn);
+    controls.appendChild(deleteBtn);
+    wrapper.appendChild(img);
+    wrapper.appendChild(controls);
+    
+    // Show controls on hover
+    wrapper.addEventListener('mouseenter', () => {
+        controls.style.opacity = '1';
+    });
+    
+    wrapper.addEventListener('mouseleave', () => {
+        controls.style.opacity = '0';
+    });
+    
+    // Image click handler - show selection toolbar
+    img.onclick = (e) => {
+        e.stopPropagation();
+        showImageSelectionToolbar(wrapper, dataUrl, alt, imageId);
+    };
+    
+    // Focus editor and insert at cursor position
+    editor.focus();
+    
+    try {
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            
+            // Delete any selected content
+            range.deleteContents();
+            
+            // Insert the wrapper at cursor position
+            range.insertNode(wrapper);
+            
+            // Move cursor after the image
+            range.setStartAfter(wrapper);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            
+            console.log('✅ Simple image inserted at cursor position');
+        } else {
+            // Fallback: append at end
+            editor.appendChild(wrapper);
+            console.log('Simple image appended at end');
+        }
+    } catch (e) {
+        console.error('Simple image insertion failed:', e);
+        // Fallback: append at end
+        editor.appendChild(wrapper);
+    }
+    
+    // Setup mutation observer for image controls
+    setupImageMutationObserver();
+}
+
+function removeSimpleImage(imageId) {
+    if (confirm('¿Estás seguro de que quieres eliminar esta imagen?')) {
+        const wrapper = document.querySelector(`[data-image-id="${imageId}"]`);
+        if (wrapper) {
+            wrapper.remove();
+            
+            // Trigger auto-save
+            if (window.autoSaveTimeout) {
+                clearTimeout(window.autoSaveTimeout);
+            }
+            window.autoSaveTimeout = setTimeout(saveSubtaskDescription, 1000);
+            showToast('Imagen eliminada', 'success');
+        }
+    }
+}
+
+// Setup MutationObserver to handle moved images
+function setupImageMutationObserver() {
+    const editor = document.getElementById('subtask-description');
+    if (!editor) return;
+    
+    // Check if observer already exists
+    if (editor.hasAttribute('data-mutation-observer-setup')) {
+        return;
+    }
+    
+    editor.setAttribute('data-mutation-observer-setup', 'true');
+    
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            if (mutation.type === 'childList') {
+                // Check for moved or new image wrappers
+                mutation.addedNodes.forEach((node) => {
+                    if (node.nodeType === 1) { // Element node
+                        const imageWrappers = node.querySelectorAll ? node.querySelectorAll('.simple-image-wrapper') : [];
+                        const isImageWrapper = node.classList && node.classList.contains('simple-image-wrapper');
+                        
+                        // Handle the node itself if it's an image wrapper
+                        if (isImageWrapper) {
+                            setupImageControls(node);
+                        }
+                        
+                        // Handle any image wrappers within the added nodes
+                        imageWrappers.forEach(setupImageControls);
+                    }
+                });
+            }
+        });
+    });
+    
+    // Start observing
+    observer.observe(editor, {
+        childList: true,
+        subtree: true
+    });
+    
+    // Setup click outside handler
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.simple-image-wrapper') && !e.target.closest('.image-selection-toolbar')) {
+            hideImageSelectionToolbar();
+        }
+    });
+    
+    console.log('MutationObserver setup for image controls');
+}
+
+// Setup controls for a single image wrapper
+// Show image selection toolbar
+function showImageSelectionToolbar(wrapper, dataUrl, alt, imageId) {
+    // Remove existing toolbar
+    hideImageSelectionToolbar();
+    
+    // Create toolbar
+    const toolbar = document.createElement('div');
+    toolbar.className = 'image-selection-toolbar';
+    toolbar.style.cssText = `
+        position: absolute;
+        top: -40px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        border-radius: 8px;
+        padding: 8px 12px;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        z-index: 1000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        font-size: 14px;
+    `;
+    
+    // Copy button
+    const copyBtn = document.createElement('button');
+    copyBtn.innerHTML = '<i class="fas fa-copy"></i> Copiar';
+    copyBtn.style.cssText = `
+        background: transparent;
+        border: none;
+        color: white;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    `;
+    copyBtn.onmouseover = () => copyBtn.style.background = 'rgba(255,255,255,0.2)';
+    copyBtn.onmouseout = () => copyBtn.style.background = 'transparent';
+    copyBtn.onclick = (e) => {
+        e.stopPropagation();
+        copyImageToClipboard(dataUrl);
+        hideImageSelectionToolbar();
+    };
+    
+    // Delete button
+    const deleteBtn = document.createElement('button');
+    deleteBtn.innerHTML = '<i class="fas fa-trash"></i> Eliminar';
+    deleteBtn.style.cssText = `
+        background: rgba(239,68,68,0.8);
+        border: none;
+        color: white;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    `;
+    deleteBtn.onmouseover = () => deleteBtn.style.background = 'rgba(239,68,68,1)';
+    deleteBtn.onmouseout = () => deleteBtn.style.background = 'rgba(239,68,68,0.8)';
+    deleteBtn.onclick = (e) => {
+        e.stopPropagation();
+        removeSimpleImage(imageId);
+        hideImageSelectionToolbar();
+    };
+    
+    // Close button
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '<i class="fas fa-times"></i>';
+    closeBtn.style.cssText = `
+        background: transparent;
+        border: none;
+        color: white;
+        cursor: pointer;
+        padding: 4px;
+        border-radius: 4px;
+        font-size: 12px;
+        margin-left: auto;
+    `;
+    closeBtn.onmouseover = () => closeBtn.style.background = 'rgba(255,255,255,0.2)';
+    closeBtn.onmouseout = () => closeBtn.style.background = 'transparent';
+    closeBtn.onclick = (e) => {
+        e.stopPropagation();
+        hideImageSelectionToolbar();
+    };
+    
+    // Assemble toolbar
+    toolbar.appendChild(copyBtn);
+    toolbar.appendChild(deleteBtn);
+    toolbar.appendChild(closeBtn);
+    
+    // Position toolbar relative to image
+    const img = wrapper.querySelector('img');
+    if (img) {
+        const rect = img.getBoundingClientRect();
+        const editorRect = wrapper.parentElement.getBoundingClientRect();
+        
+        toolbar.style.position = 'fixed';
+        toolbar.style.top = (rect.top - 50) + 'px';
+        toolbar.style.left = (rect.left + rect.width / 2 - 100) + 'px'; // Center horizontally
+    }
+    
+    // Add to body
+    document.body.appendChild(toolbar);
+    
+    // Store reference
+    window.currentImageToolbar = toolbar;
+    
+    // Auto-hide after 5 seconds
+    setTimeout(hideImageSelectionToolbar, 5000);
+}
+
+// Hide image selection toolbar
+function hideImageSelectionToolbar() {
+    if (window.currentImageToolbar) {
+        window.currentImageToolbar.remove();
+        window.currentImageToolbar = null;
+    }
+}
+
+// Copy image to clipboard
+function copyImageToClipboard(dataUrl) {
+    try {
+        // Convert dataUrl to blob
+        const response = fetch(dataUrl);
+        response.then(res => res.blob()).then(blob => {
+            const item = new ClipboardItem({ 'image/png': blob });
+            navigator.clipboard.write([item]).then(() => {
+                showToast('Imagen copiada al portapapeles', 'success');
+            }).catch(err => {
+                console.error('Failed to copy image:', err);
+                showToast('Error al copiar imagen', 'error');
+            });
+        });
+    } catch (error) {
+        console.error('Clipboard API not available:', error);
+        // Fallback: copy dataUrl as text
+        navigator.clipboard.writeText(dataUrl).then(() => {
+            showToast('URL de imagen copiada', 'success');
+        }).catch(err => {
+            console.error('Failed to copy URL:', err);
+            showToast('Error al copiar URL', 'error');
+        });
+    }
+}
+
+function setupImageControls(wrapper) {
+    // Skip if already has event listeners
+    if (wrapper.hasAttribute('data-controls-setup')) {
+        return;
+    }
+    
+    wrapper.setAttribute('data-controls-setup', 'true');
+    
+    const img = wrapper.querySelector('img');
+    const controls = wrapper.querySelector('.simple-image-controls');
+    
+    if (!img || !controls) return;
+    
+    // Remove existing listeners to avoid duplicates
+    const newImg = img.cloneNode(true);
+    const newControls = controls.cloneNode(true);
+    
+    // Replace old elements
+    img.parentNode.replaceChild(newImg, img);
+    controls.parentNode.replaceChild(newControls, controls);
+    
+    // Re-attach event listeners
+    newImg.onclick = (e) => {
+        e.stopPropagation();
+        const imageUrl = newImg.src;
+        const imageAlt = newImg.alt;
+        const imageId = wrapper.getAttribute('data-image-id');
+        showImageSelectionToolbar(wrapper, imageUrl, imageAlt, imageId);
+    };
+    
+    wrapper.addEventListener('mouseenter', () => {
+        newControls.style.opacity = '1';
+    });
+    
+    wrapper.addEventListener('mouseleave', () => {
+        newControls.style.opacity = '0';
+    });
+    
+    // Setup button handlers
+    const viewBtn = newControls.querySelector('button:first-child');
+    const deleteBtn = newControls.querySelector('button:last-child');
+    
+    if (viewBtn) {
+        viewBtn.onclick = (e) => {
+            e.stopPropagation();
+            const imageUrl = newImg.src;
+            const imageAlt = newImg.alt;
+            viewImageModal(imageUrl, imageAlt);
+        };
+    }
+    
+    if (deleteBtn) {
+        const imageId = wrapper.getAttribute('data-image-id');
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            removeSimpleImage(imageId);
+        };
+    }
+}
+
+function insertFileAsLink(file, dataUrl, alt) {
+    const icon = getFileIcon(file.type);
+    const linkHtml = `
+        <div class="file-attachment" style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; margin: 4px 0; text-decoration: none; color: var(--text-primary);">
+            <i class="fas ${icon}" style="color: var(--primary-purple);"></i>
+            <div>
+                <div style="font-weight: 500; font-size: 14px;">${escapeHtml(file.name)}</div>
+                <div style="font-size: 12px; color: var(--text-muted);">${formatFileSize(file.size)}</div>
+            </div>
+        </div>
+    `;
+    
+    document.execCommand('insertHTML', false, linkHtml);
+}
+
+function insertSubtaskMention() {
+    const editor = document.getElementById('subtask-description');
+    if (!editor) return;
+    
+    editor.focus();
+    
+    // Create a dropdown for member selection
+    let dropdown = document.getElementById('mention-dropdown');
+    if (dropdown) {
+        dropdown.remove();
+        return;
+    }
+    
+    dropdown = document.createElement('div');
+    dropdown.id = 'mention-dropdown';
+    dropdown.className = 'emoji-picker-dropdown';
+    dropdown.style.position = 'absolute';
+    
+    // Get editor position
+    const rect = editor.getBoundingClientRect();
+    dropdown.style.top = (rect.top + 100) + 'px';
+    dropdown.style.left = rect.left + 'px';
+    
+    // Add members
+    boardMembers.forEach(member => {
+        const item = document.createElement('div');
+        item.className = 'subtask-comment';
+        item.style.cursor = 'pointer';
+        item.innerHTML = `
+            <span class="subtask-assignee-avatar" style="background: ${getUserColor(member.id)} !important; width: 24px; height: 24px; font-size: 10px;">${getInitials(member.name)}</span>
+            <span style="margin-left: 8px;">${escapeHtml(member.name)}</span>
+        `;
+        item.onclick = () => {
+            const mentionHtml = `<span class="subtask-mention">@${escapeHtml(member.name)}</span>&nbsp;`;
+            document.execCommand('insertHTML', false, mentionHtml);
+            dropdown.remove();
+        };
+        dropdown.appendChild(item);
+    });
+    
+    document.body.appendChild(dropdown);
+    
+    // Close on click outside
+    setTimeout(() => {
+        document.addEventListener('click', function closeDropdown(e) {
+            if (!dropdown.contains(e.target)) {
+                dropdown.remove();
+                document.removeEventListener('click', closeDropdown);
+            }
+        }, { once: true });
+    }, 100);
+}
+
+function insertSubtaskEmoji() {
+    const editor = document.getElementById('subtask-description');
+    if (!editor) return;
+    
+    editor.focus();
+    
+    // Common emojis
+    const emojis = ['😀', '😂', '🤔', '👍', '👎', '❤️', '🎉', '🔥', '✅', '❌', '⚠️', '💡', '📌', '🔗', '📎', '📝', '✏️', '🔍', '⚙️', '📊'];
+    
+    let dropdown = document.getElementById('emoji-dropdown');
+    if (dropdown) {
+        dropdown.remove();
+        return;
+    }
+    
+    dropdown = document.createElement('div');
+    dropdown.id = 'emoji-dropdown';
+    dropdown.className = 'emoji-picker-dropdown';
+    dropdown.style.position = 'absolute';
+    
+    const rect = editor.getBoundingClientRect();
+    dropdown.style.top = (rect.top + 100) + 'px';
+    dropdown.style.left = rect.left + 'px';
+    dropdown.style.display = 'grid';
+    dropdown.style.gridTemplateColumns = 'repeat(5, 1fr)';
+    dropdown.style.gap = '8px';
+    
+    emojis.forEach(emoji => {
+        const btn = document.createElement('button');
+        btn.textContent = emoji;
+        btn.style.fontSize = '20px';
+        btn.style.background = 'transparent';
+        btn.style.border = 'none';
+        btn.style.cursor = 'pointer';
+        btn.style.padding = '4px';
+        btn.onclick = () => {
+            document.execCommand('insertText', false, emoji);
+            dropdown.remove();
+        };
+        dropdown.appendChild(btn);
+    });
+    
+    document.body.appendChild(dropdown);
+    
+    setTimeout(() => {
+        document.addEventListener('click', function closeDropdown(e) {
+            if (!dropdown.contains(e.target)) {
+                dropdown.remove();
+                document.removeEventListener('click', closeDropdown);
+            }
+        }, { once: true });
+    }, 100);
+}
+
+async function saveSubtaskDescription() {
+    const editor = document.getElementById('subtask-description');
+    if (!editor || !currentSubtaskDetail) return;
+    
+    let description = editor.innerHTML;
+    
+    // Clean and validate the content
+    description = cleanDescriptionContent(description);
+    
+    // Check if description is too large (data URLs can be very large)
+    const descriptionSize = new Blob([description]).size;
+    const maxSizeMB = 5; // 5MB limit
+    const maxSizeBytes = maxSizeMB * 1024 * 1024;
+    
+    if (descriptionSize > maxSizeBytes) {
+        console.error(`Description too large: ${descriptionSize} bytes (max: ${maxSizeBytes} bytes)`);
+        
+        // Try to reduce image sizes
+        description = optimizeDescriptionForStorage(description);
+        
+        // Check again after optimization
+        const optimizedSize = new Blob([description]).size;
+        if (optimizedSize > maxSizeBytes) {
+            showToast('La descripción es demasiado grande. Reduce el tamaño de las imágenes.', 'error');
+            return;
+        }
+        
+        console.log(`Optimized description size: ${optimizedSize} bytes`);
+    }
+    
+    try {
+        console.log('Saving description, size:', new Blob([description]).size, 'bytes');
+        const response = await apiRequest(`/api/tasks/${currentSubtaskDetail.id}/description`, { 
+            method: 'PATCH', 
+            body: { description },
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        currentSubtaskDetail.description = description;
+        showToast('Descripción guardada', 'success');
+    } catch (error) {
+        console.error('Error saving description:', error);
+        
+        if (error.status === 500) {
+            showToast('Error del servidor al guardar. Las imágenes pueden ser demasiado grandes.', 'error');
+        } else if (error.status === 413) {
+            showToast('La descripción es demasiado grande. Usa imágenes más pequeñas.', 'error');
+        } else {
+            showToast('Error al guardar descripción: ' + (error.message || 'Error desconocido'), 'error');
+        }
+    }
+}
+
+function viewImageModal(dataUrl, alt) {
+    // Create modal overlay
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.9);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+        cursor: pointer;
+    `;
+    
+    // Create image container
+    const imgContainer = document.createElement('div');
+    imgContainer.style.cssText = `
+        max-width: 90%;
+        max-height: 90%;
+        position: relative;
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    `;
+    
+    // Create image
+    const img = document.createElement('img');
+    img.src = dataUrl;
+    img.alt = alt;
+    img.style.cssText = `
+        max-width: 100%;
+        max-height: 70vh;
+        width: auto;
+        height: auto;
+        border-radius: 4px;
+        display: block;
+        object-fit: contain;
+    `;
+    
+    // Create close button
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '<i class="fas fa-times"></i>';
+    closeBtn.style.cssText = `
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(0,0,0,0.7);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        cursor: pointer;
+        font-size: 16px;
+        z-index: 10001;
+    `;
+    
+    // Create title
+    const title = document.createElement('div');
+    title.textContent = alt || 'Imagen';
+    title.style.cssText = `
+        margin-bottom: 10px;
+        font-weight: 600;
+        color: var(--text-primary);
+        text-align: center;
+    `;
+    
+    // Create dimensions display
+    const dimensions = document.createElement('div');
+    dimensions.style.cssText = `
+        margin-top: 10px;
+        padding: 8px 12px;
+        background: var(--bg-secondary);
+        border-radius: 4px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        text-align: center;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+    `;
+    
+    // Update dimensions when image loads
+    img.onload = () => {
+        const width = img.naturalWidth;
+        const height = img.naturalHeight;
+        dimensions.innerHTML = `
+            <span><strong>Dimensiones:</strong> ${width} × ${height} px</span>
+            <span><strong>Tamaño:</strong> ${formatFileSize(dataUrl.length * 0.75)}</span>
+        `;
+    };
+    
+    // Assemble modal
+    imgContainer.appendChild(title);
+    imgContainer.appendChild(img);
+    imgContainer.appendChild(dimensions);
+    imgContainer.appendChild(closeBtn);
+    modal.appendChild(imgContainer);
+    
+    // Event handlers
+    const closeModal = () => {
+        document.body.removeChild(modal);
+        document.removeEventListener('keydown', handleEscape);
+    };
+    
+    const handleEscape = (e) => {
+        if (e.key === 'Escape') closeModal();
+    };
+    
+    closeBtn.onclick = closeModal;
+    modal.onclick = (e) => {
+        if (e.target === modal) closeModal();
+    };
+    imgContainer.onclick = (e) => e.stopPropagation();
+    
+    document.addEventListener('keydown', handleEscape);
+    document.body.appendChild(modal);
+    
+    // Focus for accessibility
+    closeBtn.focus();
+}
+
+function removeImage(imageId) {
+    if (confirm('¿Estás seguro de que quieres eliminar esta imagen?')) {
+        const wrapper = document.querySelector(`[data-image-id="${imageId}"]`);
+        if (wrapper) {
+            wrapper.remove();
+            
+            // Trigger auto-save
+            if (window.autoSaveTimeout) {
+                clearTimeout(window.autoSaveTimeout);
+            }
+            window.autoSaveTimeout = setTimeout(saveSubtaskDescription, 1000);
+            showToast('Imagen eliminada', 'success');
+        }
+    }
+}
+
+function optimizeDescriptionForStorage(description) {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = description;
+    
+    // Optimize images by reducing quality
+    const images = tempDiv.querySelectorAll('img');
+    images.forEach(img => {
+        const src = img.src || img.getAttribute('src');
+        if (src && src.startsWith('data:image/')) {
+            try {
+                // Reduce image quality for storage
+                const base64Data = src.split(',')[1];
+                if (base64Data && base64Data.length > 100000) { // Only optimize large images
+                    // For now, just log - in a real implementation, you'd resize the image
+                    console.log('Large image detected, consider using smaller images:', base64Data.length, 'characters');
+                }
+            } catch (e) {
+                console.error('Error optimizing image:', e);
+            }
+        }
+    });
+    
+    return tempDiv.innerHTML;
+}
+
+function cleanDescriptionContent(content) {
+    // Create a temporary div to parse and clean the content
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = content;
+    
+    // Process all images to ensure they have proper attributes
+    const images = tempDiv.querySelectorAll('img');
+    images.forEach(img => {
+        // Check if src is valid (data URLs are valid)
+        const src = img.src || img.getAttribute('src');
+        if (!src) {
+            // Try to get src from data attributes
+            const dataSrc = img.getAttribute('data-src');
+            if (dataSrc) {
+                img.setAttribute('src', dataSrc);
+            } else {
+                img.remove();
+                return;
+            }
+        } else {
+            // Ensure src is properly set as attribute
+            img.setAttribute('src', src);
+        }
+        
+        // Ensure alt attribute exists
+        if (!img.alt) {
+            img.alt = 'Imagen';
+        }
+        
+        // Clean up style attribute
+        if (img.style.cssText) {
+            // Keep only safe styles
+            const safeStyles = ['width', 'height', 'max-width', 'border-radius', 'border', 'box-shadow', 'margin', 'display'];
+            const styleParts = img.style.cssText.split(';');
+            const cleanStyles = styleParts.filter(style => {
+                const property = style.split(':')[0]?.trim();
+                return safeStyles.includes(property);
+            }).join(';');
+            img.style.cssText = cleanStyles;
+        }
+    });
+    
+    // Process file attachments
+    const attachments = tempDiv.querySelectorAll('.file-attachment');
+    attachments.forEach(attachment => {
+        // Ensure attachment has proper structure
+        if (!attachment.querySelector('i') || !attachment.querySelector('div')) {
+            // Rebuild attachment structure if broken
+            const fileName = attachment.textContent || 'Archivo';
+            const icon = getFileIconFromName(fileName);
+            attachment.innerHTML = `
+                <i class="fas ${icon}" style="color: var(--primary-purple);"></i>
+                <div>
+                    <div style="font-weight: 500; font-size: 14px;">${escapeHtml(fileName)}</div>
+                </div>
+            `;
+        }
+    });
+    
+    // Clean up any script tags or dangerous content
+    const scripts = tempDiv.querySelectorAll('script');
+    scripts.forEach(script => script.remove());
+    
+    // Return cleaned HTML
+    return tempDiv.innerHTML;
+}
+
+function getFileIconFromName(fileName) {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    switch (extension) {
+        case 'jpg':
+        case 'jpeg':
+        case 'png':
+        case 'gif':
+        case 'webp':
+            return 'fa-image';
+        case 'xlsx':
+        case 'xls':
+            return 'fa-file-excel';
+        case 'docx':
+        case 'doc':
+            return 'fa-file-word';
+        case 'pdf':
+            return 'fa-file-pdf';
+        case 'txt':
+            return 'fa-file-alt';
+        case 'csv':
+            return 'fa-file-csv';
+        default:
+            return 'fa-file';
     }
 }

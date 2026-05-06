@@ -87,6 +87,41 @@ public static class StoryRoutes
                         AssigneeName = reader.IsDBNull(11) ? null : reader.GetString(11),
                         CreatedAt = reader.GetDateTime(12)
                     };
+                    
+                    // Load tasks for this story
+                    reader.Close(); // Close first reader before using second one
+                    
+                    var tasksSql = @"
+                        SELECT t.Id, CAST(t.StoryId AS NVARCHAR(36)), t.Title, t.Description, t.EstimatedHours, t.ActualHours, 
+                               t.Status, t.Priority, CAST(t.AssignedToId AS NVARCHAR(36)), u.Name as AssignedToName, t.CreatedAt
+                        FROM Tasks t
+                        LEFT JOIN Users u ON t.AssignedToId = u.Id
+                        WHERE CAST(t.StoryId AS NVARCHAR(36)) = @StoryId
+                        ORDER BY t.CreatedAt";
+                    
+                    using (var tasksCmd = new SqlCommand(tasksSql, connection))
+                    {
+                        tasksCmd.Parameters.AddWithValue("@StoryId", id);
+                        using var tasksReader = await tasksCmd.ExecuteReaderAsync();
+                        while (await tasksReader.ReadAsync())
+                        {
+                            storyDto.Tasks.Add(new TaskItemDto
+                            {
+                                Id = tasksReader.GetGuid(0).ToString(),
+                                StoryId = tasksReader.GetString(1),
+                                Title = tasksReader.GetString(2),
+                                Description = tasksReader.IsDBNull(3) ? null : tasksReader.GetString(3),
+                                EstimatedHours = tasksReader.IsDBNull(4) ? null : tasksReader.GetInt32(4),
+                                ActualHours = tasksReader.IsDBNull(5) ? null : tasksReader.GetInt32(5),
+                                Status = tasksReader.GetString(6),
+                                Priority = tasksReader.GetInt32(7),
+                                AssignedToId = tasksReader.IsDBNull(8) ? null : tasksReader.GetString(8),
+                                AssignedToName = tasksReader.IsDBNull(9) ? null : tasksReader.GetString(9),
+                                CreatedAt = tasksReader.GetDateTime(10)
+                            });
+                        }
+                    }
+                    
                     return Results.Ok(storyDto);
                 }
             }

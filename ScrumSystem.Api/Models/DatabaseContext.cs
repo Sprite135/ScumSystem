@@ -194,14 +194,22 @@ public class DatabaseContext
             Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
             StoryId UNIQUEIDENTIFIER NOT NULL REFERENCES UserStories(Id),
             Title NVARCHAR(200) NOT NULL,
-            Description NVARCHAR(1000),
+            Description NVARCHAR(MAX),
             EstimatedHours INT,
             ActualHours INT DEFAULT 0,
             Status NVARCHAR(20) DEFAULT 'Todo' CHECK (Status IN ('Todo', 'InProgress', 'Done', 'Blocked')),
             AssignedTo UNIQUEIDENTIFIER REFERENCES Users(Id),
             CreatedAt DATETIME2 DEFAULT GETDATE(),
+            UpdatedAt DATETIME2 DEFAULT GETDATE(),
             CompletedAt DATETIME2
         )",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'Tasks') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'UpdatedAt' AND object_id = OBJECT_ID('Tasks'))
+        ALTER TABLE Tasks ADD UpdatedAt DATETIME2 DEFAULT GETDATE()",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'Tasks') 
+          AND EXISTS (SELECT * FROM sys.columns WHERE name = 'Description' AND object_id = OBJECT_ID('Tasks') 
+                     AND max_length <> -1) -- -1 indicates MAX
+        ALTER TABLE Tasks ALTER COLUMN Description NVARCHAR(MAX)",
 
         @"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'StandupNotes')
         CREATE TABLE StandupNotes (

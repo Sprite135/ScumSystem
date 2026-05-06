@@ -442,6 +442,11 @@ public class UpdateTaskStatusRequest
     public int ActualHours { get; set; }
 }
 
+public class UpdateTaskAssigneeRequest
+{
+    public string AssignedToId { get; set; } = string.Empty;
+}
+
 public class CreateStandupRequest
 {
     public string SprintId { get; set; } = string.Empty;
@@ -483,4 +488,9 @@ public class BurndownChartDto
     public List<string> Labels { get; set; } = new();
     public List<decimal> Ideal { get; set; } = new();
     public List<decimal> Actual { get; set; } = new();
+}
+
+public class UpdateTaskDescriptionRequest
+{
+    public string Description { get; set; } = string.Empty;
 }

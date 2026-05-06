@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - Scrum System</title>
-    <link rel="stylesheet" href="css/styles.css?v=3855">
+    <link rel="stylesheet" href="css/styles.css?v=3864">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -12,7 +12,7 @@
     <div class="main-app" id="main-app">
         <!-- Sidebar -->
         <aside class="sidebar">
-            <div class="sidebar-header">
+            <div class="sidebar-header" onclick="navigateTo('welcome')" style="cursor: pointer;" title="Ir a inicio">
                 <i class="fas fa-users-cog"></i>
                 <span>Scrum System</span>
             </div>
@@ -674,6 +674,276 @@
         </div>
     </div>
 
-    <script src="js/app.js?v=3861"></script>
+    <!-- Subtask Detail Modal -->
+    <div id="subtask-detail-modal" class="modal subtask-detail-modal">
+        <div class="subtask-detail-content">
+            <!-- Header -->
+            <div class="subtask-detail-header">
+                <div class="subtask-detail-breadcrumbs">
+                    <a href="#" onclick="closeSubtaskDetail(); return false;"><i class="fas fa-project-diagram"></i> <span id="subtask-parent-key">PROJ-1</span></a>
+                    <span class="breadcrumb-separator">/</span>
+                    <span id="subtask-key">SUB-001</span>
+                </div>
+                <div class="subtask-detail-actions">
+                    <button class="btn btn-icon btn-small" onclick="editSubtask()" title="Editar">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-icon btn-small" title="Más opciones">
+                        <i class="fas fa-ellipsis-h"></i>
+                    </button>
+                    <button class="btn btn-icon btn-small" onclick="closeSubtaskDetail()" title="Cerrar">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Loading -->
+            <div id="subtask-detail-loading" class="subtask-detail-loading">
+                <i class="fas fa-spinner fa-spin"></i> Cargando subtarea...
+            </div>
+
+            <!-- Body -->
+            <div id="subtask-detail-body" class="subtask-detail-layout" style="display: none;">
+                <!-- Left Column - Main Content -->
+                <main class="subtask-detail-main">
+                    <!-- Title -->
+                    <h1 class="subtask-detail-title" id="subtask-title">Título de la subtarea</h1>
+
+                    <!-- Description -->
+                    <section class="subtask-section">
+                        <h3><i class="fas fa-align-left"></i> Descripción</h3>
+                        <div class="subtask-description-editor" id="subtask-description-container">
+                            <!-- Toolbar -->
+                            <div class="subtask-editor-toolbar" id="subtask-editor-toolbar">
+                                <div class="toolbar-group">
+                                    <button type="button" class="toolbar-btn" onclick="formatSubtaskText('formatBlock', 'H1')" title="Título 1">
+                                        <i class="fas fa-heading"></i><span class="btn-small">1</span>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="formatSubtaskText('formatBlock', 'H2')" title="Título 2">
+                                        <i class="fas fa-heading"></i><span class="btn-small">2</span>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="formatSubtaskText('formatBlock', 'H3')" title="Título 3">
+                                        <i class="fas fa-heading"></i><span class="btn-small">3</span>
+                                    </button>
+                                </div>
+                                <div class="toolbar-divider"></div>
+                                <div class="toolbar-group">
+                                    <button type="button" class="toolbar-btn" onclick="formatSubtaskText('bold')" title="Negrita">
+                                        <i class="fas fa-bold"></i>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="formatSubtaskText('italic')" title="Cursiva">
+                                        <i class="fas fa-italic"></i>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="formatSubtaskText('underline')" title="Subrayado">
+                                        <i class="fas fa-underline"></i>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="formatSubtaskText('strikeThrough')" title="Tachado">
+                                        <i class="fas fa-strikethrough"></i>
+                                    </button>
+                                </div>
+                                <div class="toolbar-divider"></div>
+                                <div class="toolbar-group">
+                                    <button type="button" class="toolbar-btn" onclick="formatSubtaskText('insertUnorderedList')" title="Lista con viñetas">
+                                        <i class="fas fa-list-ul"></i>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="formatSubtaskText('insertOrderedList')" title="Lista numerada">
+                                        <i class="fas fa-list-ol"></i>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="insertSubtaskCheckbox()" title="Lista de tareas">
+                                        <i class="fas fa-check-square"></i>
+                                    </button>
+                                </div>
+                                <div class="toolbar-divider"></div>
+                                <div class="toolbar-group">
+                                    <button type="button" class="toolbar-btn" onclick="insertSubtaskLink()" title="Insertar enlace">
+                                        <i class="fas fa-link"></i>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="insertSubtaskImage()" title="Insertar imagen">
+                                        <i class="fas fa-image"></i>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="insertSubtaskMention()" title="Mencionar @">
+                                        <i class="fas fa-at"></i>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="insertSubtaskEmoji()" title="Emoji">
+                                        <i class="fas fa-smile"></i>
+                                    </button>
+                                </div>
+                                <div class="toolbar-divider"></div>
+                                <div class="toolbar-group">
+                                    <button type="button" class="toolbar-btn" onclick="insertSubtaskCode()" title="Insertar código">
+                                        <i class="fas fa-code"></i>
+                                    </button>
+                                    <button type="button" class="toolbar-btn" onclick="insertSubtaskQuote()" title="Insertar cita">
+                                        <i class="fas fa-quote-right"></i>
+                                    </button>
+                                </div>
+                                <div class="toolbar-divider"></div>
+                                <div class="toolbar-group">
+                                    <button type="button" class="toolbar-btn toolbar-more" onclick="toggleMoreToolbarOptions()" title="Más opciones">
+                                        <i class="fas fa-ellipsis-h"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- More Options Dropdown -->
+                            <div class="toolbar-more-options" id="toolbar-more-options" style="display: none;">
+                                <button type="button" class="toolbar-btn" onclick="formatSubtaskText('justifyLeft')" title="Alinear izquierda">
+                                    <i class="fas fa-align-left"></i>
+                                </button>
+                                <button type="button" class="toolbar-btn" onclick="formatSubtaskText('justifyCenter')" title="Centrar">
+                                    <i class="fas fa-align-center"></i>
+                                </button>
+                                <button type="button" class="toolbar-btn" onclick="formatSubtaskText('justifyRight')" title="Alinear derecha">
+                                    <i class="fas fa-align-right"></i>
+                                </button>
+                                <button type="button" class="toolbar-btn" onclick="formatSubtaskText('removeFormat')" title="Quitar formato">
+                                    <i class="fas fa-remove-format"></i>
+                                </button>
+                                <button type="button" class="toolbar-btn" onclick="formatSubtaskText('undo')" title="Deshacer">
+                                    <i class="fas fa-undo"></i>
+                                </button>
+                                <button type="button" class="toolbar-btn" onclick="formatSubtaskText('redo')" title="Rehacer">
+                                    <i class="fas fa-redo"></i>
+                                </button>
+                            </div>
+                            <!-- Editor Content -->
+                            <div class="subtask-description-content" id="subtask-description" contenteditable="true" data-placeholder="Agrega una descripción más detallada...">
+                                <p class="placeholder-text">Agrega una descripción más detallada...</p>
+                            </div>
+                            <!-- Editor Footer -->
+                            <div class="subtask-editor-footer">
+                                <span class="editor-hint">Consejo: puedes usar <kbd>@</kbd> para mencionar a un compañero de equipo</span>
+                                <button type="button" class="btn btn-small btn-primary" onclick="saveSubtaskDescription()">
+                                    <i class="fas fa-save"></i> Guardar
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Linked Activities -->
+                    <section class="subtask-section">
+                        <h3><i class="fas fa-link"></i> Actividades vinculadas</h3>
+                        <button class="subtask-add-link" type="button">
+                            <i class="fas fa-plus"></i> Añadir actividad vinculada
+                        </button>
+                    </section>
+
+                    <!-- Activity Tabs -->
+                    <section class="subtask-section">
+                        <div class="subtask-activity-tabs">
+                            <button class="active" type="button">Todo</button>
+                            <button type="button">Comentarios</button>
+                            <button type="button">Historial</button>
+                            <button type="button">Registro de actividad</button>
+                        </div>
+
+                        <!-- Comment Box -->
+                        <div class="subtask-comment-box">
+                            <div class="subtask-user-avatar" id="subtask-current-user-avatar">U</div>
+                            <div class="subtask-comment-input-wrapper">
+                                <textarea id="subtask-new-comment" class="subtask-comment-input" rows="2" placeholder="Añadir un comentario..."></textarea>
+                                <div class="subtask-comment-actions">
+                                    <span class="shortcut-hint">Consejo de expertos: pulsa <kbd>F</kbd> para comentar</span>
+                                    <button class="btn btn-small" onclick="addSubtaskComment()">
+                                        <i class="fas fa-paper-plane"></i> Comentar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Comments List -->
+                        <div class="subtask-comments-list" id="subtask-comments-list">
+                            <!-- Comments loaded dynamically -->
+                        </div>
+                    </section>
+                </main>
+
+                <!-- Right Column - Sidebar -->
+                <aside class="subtask-detail-sidebar">
+                    <!-- Status Dropdown -->
+                    <div class="subtask-field">
+                        <label><i class="fas fa-tasks"></i> Estado</label>
+                        <select id="subtask-status" class="subtask-field-select" onchange="updateSubtaskStatus(this.value)">
+                            <option value="Todo">Por hacer</option>
+                            <option value="InProgress">En curso</option>
+                            <option value="Done">Finalizado</option>
+                        </select>
+                    </div>
+
+                    <!-- Assignee -->
+                    <div class="subtask-field">
+                        <label><i class="fas fa-user"></i> Persona asignada</label>
+                        <div class="subtask-assignee-display" id="subtask-assignee-display">
+                            <span class="subtask-assignee-avatar unassigned">?</span>
+                            <span class="subtask-assignee-name">Sin asignar</span>
+                        </div>
+                        <button class="subtask-assign-me" onclick="assignSubtaskToMe()">
+                            <i class="fas fa-user-check"></i> Asignarme a mí
+                        </button>
+                    </div>
+
+                    <!-- Labels -->
+                    <div class="subtask-field">
+                        <label><i class="fas fa-tag"></i> Etiquetas</label>
+                        <span class="subtask-field-value">Ninguno</span>
+                    </div>
+
+                    <!-- Parent Story -->
+                    <div class="subtask-field">
+                        <label><i class="fas fa-sitemap"></i> Principal</label>
+                        <a href="#" id="subtask-parent-link" class="subtask-field-link">
+                            <i class="fas fa-external-link-alt"></i> <span id="subtask-parent-title">Historia padre</span>
+                        </a>
+                    </div>
+
+                    <!-- Sprint -->
+                    <div class="subtask-field">
+                        <label><i class="fas fa-running"></i> Sprint</label>
+                        <span class="subtask-field-value" id="subtask-sprint">Sprint actual</span>
+                    </div>
+
+                    <!-- Story Points -->
+                    <div class="subtask-field">
+                        <label><i class="fas fa-chart-line"></i> Story point estimate</label>
+                        <span class="subtask-field-value">Ninguno</span>
+                    </div>
+
+                    <!-- Development -->
+                    <div class="subtask-field">
+                        <label><i class="fas fa-code-branch"></i> Desarrollo</label>
+                        <button class="subtask-dev-btn">
+                            <i class="fas fa-code-branch"></i> Crear rama
+                        </button>
+                        <button class="subtask-dev-btn">
+                            <i class="fas fa-code-commit"></i> Crear confirmación
+                        </button>
+                    </div>
+
+                    <!-- Reporter -->
+                    <div class="subtask-field">
+                        <label><i class="fas fa-user-edit"></i> Informador</label>
+                        <div class="subtask-reporter" id="subtask-reporter">
+                            <span class="subtask-reporter-avatar">SC</span>
+                            <span class="subtask-reporter-name">Sebastian Cumpa</span>
+                        </div>
+                    </div>
+
+                    <!-- Footer Info -->
+                    <div class="subtask-sidebar-footer">
+                        <div class="subtask-created">
+                            <span>Creado hace 14 horas</span>
+                        </div>
+                        <div class="subtask-updated">
+                            <span>Actualizado ahora</span>
+                        </div>
+                        <button class="subtask-configure" onclick="configureSubtask()">
+                            <i class="fas fa-cog"></i> Configurar
+                        </button>
+                    </div>
+                </aside>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js?v=3864"></script>
 </body>
 </html>

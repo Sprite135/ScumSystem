@@ -32,8 +32,8 @@ public static class TaskRoutes
 
             // Insert task
             var insertSql = @"
-                INSERT INTO Tasks (Id, StoryId, Title, Description, EstimatedHours, ActualHours, Status, AssignedToId, CreatedAt) 
-                VALUES (@Id, @StoryId, @Title, @Description, @EstimatedHours, @ActualHours, @Status, @AssignedToId, @CreatedAt)";
+                INSERT INTO Tasks (Id, StoryId, Title, Description, EstimatedHours, ActualHours, Status, Priority, AssignedToId, CreatedAt) 
+                VALUES (@Id, @StoryId, @Title, @Description, @EstimatedHours, @ActualHours, @Status, @Priority, @AssignedToId, @CreatedAt)";
 
             using (var insertCmd = new SqlCommand(insertSql, connection))
             {
@@ -44,7 +44,9 @@ public static class TaskRoutes
                 insertCmd.Parameters.AddWithValue("@EstimatedHours", (object?)request.EstimatedHours ?? DBNull.Value);
                 insertCmd.Parameters.AddWithValue("@ActualHours", 0);
                 insertCmd.Parameters.AddWithValue("@Status", status);
-                insertCmd.Parameters.AddWithValue("@AssignedToId", (object?)(request.AssignedToId != null ? Guid.Parse(request.AssignedToId) : null) ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@Priority", request.Priority);
+                insertCmd.Parameters.AddWithValue("@AssignedToId", 
+                    !string.IsNullOrEmpty(request.AssignedToId) ? (object)Guid.Parse(request.AssignedToId) : DBNull.Value);
                 insertCmd.Parameters.AddWithValue("@CreatedAt", createdAt);
                 await insertCmd.ExecuteNonQueryAsync();
             }
@@ -112,15 +114,14 @@ public static class TaskRoutes
             // Update task status
             var updateSql = @"
                 UPDATE Tasks 
-                SET Status = @Status, ActualHours = @ActualHours, CompletedAt = @CompletedAt
+                SET Status = @Status, ActualHours = @ActualHours
                 WHERE CAST(Id AS NVARCHAR(36)) = @Id";
 
             using (var updateCmd = new SqlCommand(updateSql, connection))
             {
                 updateCmd.Parameters.AddWithValue("@Id", id);
                 updateCmd.Parameters.AddWithValue("@Status", request.Status);
-                updateCmd.Parameters.AddWithValue("@ActualHours", (object?)request.ActualHours ?? DBNull.Value);
-                updateCmd.Parameters.AddWithValue("@CompletedAt", (object?)completedAt ?? DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@ActualHours", request.ActualHours);
                 await updateCmd.ExecuteNonQueryAsync();
             }
 
@@ -128,7 +129,7 @@ public static class TaskRoutes
             return Results.Ok(new { message = "Status updated" });
         });
 
-        group.MapPatch("/{id}/assign", async (string id, string assignedTo, DatabaseContext dbContext) =>
+        group.MapPatch("/{id}/assign", async (string id, UpdateTaskAssigneeRequest request, DatabaseContext dbContext) =>
         {
             using var connection = dbContext.CreateConnection();
             await connection.OpenAsync();
@@ -149,14 +150,48 @@ public static class TaskRoutes
             using (var updateCmd = new SqlCommand(updateSql, connection))
             {
                 updateCmd.Parameters.AddWithValue("@Id", id);
-                updateCmd.Parameters.AddWithValue("@AssignedToId", (object?)(assignedTo != null ? Guid.Parse(assignedTo) : null) ?? DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@AssignedToId", 
+                    !string.IsNullOrEmpty(request.AssignedToId) ? (object)Guid.Parse(request.AssignedToId) : DBNull.Value);
                 await updateCmd.ExecuteNonQueryAsync();
             }
 
-            await AddStoryHistoryAsync(connection, currentTask.StoryId, assignedTo, "SubtaskAssigned", $"Subtarea '{currentTask.Title}' asignada.");
+            await AddStoryHistoryAsync(connection, currentTask.StoryId, request.AssignedToId, "SubtaskAssigned", $"Subtarea '{currentTask.Title}' asignada.");
             
             var updatedTask = await GetTaskByIdAsync(connection, id);
             return Results.Ok(updatedTask);
+        });
+
+        group.MapPatch("/{id}/description", async (string id, UpdateTaskDescriptionRequest request, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            // Get current task
+            var currentTask = await GetTaskByIdAsync(connection, id);
+            if (currentTask is null)
+            {
+                return Results.NotFound();
+            }
+
+            // Update task description
+            var updateSql = @"
+                UPDATE Tasks 
+                SET Description = @Description, UpdatedAt = @UpdatedAt
+                WHERE CAST(Id AS NVARCHAR(36)) = @Id";
+
+            using (var updateCmd = new SqlCommand(updateSql, connection))
+            {
+                updateCmd.Parameters.AddWithValue("@Id", id);
+                updateCmd.Parameters.AddWithValue("@Description", 
+                    !string.IsNullOrEmpty(request.Description) ? request.Description : DBNull.Value);
+                updateCmd.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
+                await updateCmd.ExecuteNonQueryAsync();
+            }
+
+            await AddStoryHistoryAsync(connection, currentTask.StoryId, null, "SubtaskUpdated", $"Descripción de la subtarea '{currentTask.Title}' actualizada.");
+            
+            var updatedTask = await GetTaskByIdAsync(connection, id);
+            return Results.Ok(new { message = "Descripción actualizada exitosamente" });
         });
 
         group.MapGet("/board/{sprintId}", async (string sprintId, DatabaseContext dbContext) =>
@@ -366,14 +401,15 @@ public static class TaskRoutes
     {
         var historyId = Guid.NewGuid();
         var sql = @"
-            INSERT INTO StoryHistories (Id, StoryId, UserId, EventType, Message, CreatedAt)
+            INSERT INTO StoryHistory (Id, StoryId, UserId, EventType, Message, CreatedAt)
             VALUES (@Id, @StoryId, @UserId, @EventType, @Message, @CreatedAt)";
 
         using (var cmd = new SqlCommand(sql, connection))
         {
             cmd.Parameters.AddWithValue("@Id", historyId);
             cmd.Parameters.AddWithValue("@StoryId", Guid.Parse(storyId));
-            cmd.Parameters.AddWithValue("@UserId", (object?)(userId != null ? Guid.Parse(userId) : null) ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@UserId", 
+                !string.IsNullOrEmpty(userId) ? (object)Guid.Parse(userId) : DBNull.Value);
             cmd.Parameters.AddWithValue("@EventType", eventType);
             cmd.Parameters.AddWithValue("@Message", message);
             cmd.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow);
