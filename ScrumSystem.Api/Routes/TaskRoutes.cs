@@ -367,33 +367,34 @@ public static class TaskRoutes
     private static async Task<TaskItemDto?> GetTaskByIdAsync(SqlConnection connection, string taskId)
     {
         var sql = @"
-            SELECT t.Id, CAST(t.StoryId AS NVARCHAR(36)), t.Title, t.Description, t.EstimatedHours, t.ActualHours, 
-                   t.Status, CAST(t.AssignedToId AS NVARCHAR(36)), u.Name as AssignedToName, t.CreatedAt
+            SELECT t.Id, t.StoryId, t.Title, t.Description, t.EstimatedHours, t.ActualHours, 
+                   t.Status, t.AssignedToId, u.Name as AssignedToName, t.CreatedAt
             FROM Tasks t
             LEFT JOIN Users u ON t.AssignedToId = u.Id
-            WHERE CAST(t.Id AS NVARCHAR(36)) = @TaskId";
+            WHERE t.Id = @TaskId";
 
         using (var cmd = new SqlCommand(sql, connection))
         {
-            cmd.Parameters.AddWithValue("@TaskId", taskId);
+            cmd.Parameters.AddWithValue("@TaskId", Guid.Parse(taskId));
             using var reader = await cmd.ExecuteReaderAsync();
             if (await reader.ReadAsync())
             {
                 return new TaskItemDto
                 {
                     Id = reader.GetGuid(0).ToString(),
-                    StoryId = reader.GetString(1),
+                    StoryId = reader.GetGuid(1).ToString(),
                     Title = reader.GetString(2),
                     Description = reader.IsDBNull(3) ? null : reader.GetString(3),
                     EstimatedHours = reader.IsDBNull(4) ? null : reader.GetInt32(4),
                     ActualHours = reader.IsDBNull(5) ? null : reader.GetInt32(5),
                     Status = reader.GetString(6),
-                    AssignedToId = reader.IsDBNull(7) ? null : reader.GetString(7),
+                    AssignedToId = reader.IsDBNull(7) ? null : reader.GetGuid(7).ToString(),
                     AssignedToName = reader.IsDBNull(8) ? null : reader.GetString(8),
                     CreatedAt = reader.GetDateTime(9)
                 };
             }
         }
+
         return null;
     }
 

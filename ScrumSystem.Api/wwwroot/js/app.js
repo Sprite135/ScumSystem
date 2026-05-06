@@ -10,6 +10,8 @@ let burndownChart = null;
 let membersToAdd = [];
 let nextSprintNumber = 2; // Sprint 1 already exists, next will be Sprint 2
 let storyToDelete = null; // Stores story ID pending deletion
+let taskCache = new Map(); // Global task cache
+let preventIssueDetailReload = false; // Prevent reload after assignment changes
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
@@ -424,44 +426,103 @@ function renderSidebarProjects() {
         'globe': '<i class="fas fa-globe"></i>'
     };
     
-    container.innerHTML = projects.map(p => {
-        const iconHtml = iconMap[p.icon] || iconMap['folder'];
-        const iconStyle = p.color ? `background: ${p.color};` : '';
-        const isActive = selectedProjectId === p.id ? 'active' : '';
-        
-        // Check if current user is creator
-        const currentUserId = currentUser?.id?.toString().toLowerCase();
+    // Separate projects by ownership
+    const currentUserId = currentUser?.id?.toString().toLowerCase();
+    const myProjects = projects.filter(p => {
         const projectOwnerId = p.creatorId?.toString().toLowerCase();
-        const isCreator = currentUserId && projectOwnerId && currentUserId === projectOwnerId;
-        
-        return `
-            <div class="sidebar-project-item ${isActive}" onclick="selectProject('${p.id}')">
-                <div class="sidebar-project-icon" style="${iconStyle}">
-                    ${iconHtml}
+        return currentUserId && projectOwnerId && currentUserId === projectOwnerId;
+    });
+    
+    const otherProjects = projects.filter(p => {
+        const projectOwnerId = p.creatorId?.toString().toLowerCase();
+        return !currentUserId || !projectOwnerId || currentUserId !== projectOwnerId;
+    });
+    
+    let html = '';
+    
+    // My Projects (Created by me)
+    if (myProjects.length > 0) {
+        html += `
+            <div class="projects-section">
+                <div class="projects-section-header">
+                    <i class="fas fa-crown"></i>
+                    <span>Mis Proyectos</span>
+                    <small style="color: var(--text-muted); font-size: 11px;">Creados por mí</small>
                 </div>
-                <span class="sidebar-project-name">${escapeHtml(p.name)}</span>
-                <button class="sidebar-project-menu-btn" onclick="event.stopPropagation(); toggleProjectMenu('${p.id}', '${escapeHtml(p.name)}', ${isCreator})">
-                    <i class="fas fa-ellipsis-v"></i>
-                </button>
-                <div class="project-menu" id="project-menu-${p.id}" style="display: none;">
-                    <div class="project-menu-item" onclick="event.stopPropagation(); openAddMembersModal('${p.id}', '${escapeHtml(p.name)}')">
-                        <i class="fas fa-user-plus"></i> Agregar miembros
-                    </div>
-                    ${isCreator 
-                        ? `<div class="project-menu-item" onclick="event.stopPropagation(); openConfigureProjectModal('${p.id}', '${escapeHtml(p.name)}', '${escapeHtml(p.key || '')}', '${escapeHtml(p.color || '')}', '${escapeHtml(p.icon || '')}')">
-                            <i class="fas fa-cog"></i> Configurar
-                           </div>
-                           <div class="project-menu-item text-danger" onclick="event.stopPropagation(); deleteProject('${p.id}', '${escapeHtml(p.name)}')">
-                            <i class="fas fa-trash"></i> Eliminar proyecto
-                           </div>`
-                        : `<div class="project-menu-item text-warning" onclick="event.stopPropagation(); leaveProject('${p.id}', '${escapeHtml(p.name)}')">
-                            <i class="fas fa-sign-out-alt"></i> Salir del proyecto
-                           </div>`
-                    }
+                <div class="projects-list">
+                    ${myProjects.map(p => {
+                        const iconHtml = iconMap[p.icon] || iconMap['folder'];
+                        const iconStyle = p.color ? `background: ${p.color};` : '';
+                        const isActive = selectedProjectId === p.id ? 'active' : '';
+                        const isCreator = true;
+                        
+                        return `
+                            <div class="sidebar-project-item ${isActive}" onclick="selectProject('${p.id}')">
+                                <div class="sidebar-project-icon" style="${iconStyle}">
+                                    ${iconHtml}
+                                </div>
+                                <span class="sidebar-project-name">${escapeHtml(p.name)}</span>
+                                <button class="sidebar-project-menu-btn" onclick="event.stopPropagation(); toggleProjectMenu('${p.id}', '${escapeHtml(p.name)}', ${isCreator})">
+                                    <i class="fas fa-ellipsis-v"></i>
+                                </button>
+                                <div class="project-menu" id="project-menu-${p.id}" style="display: none;">
+                                    <div class="project-menu-item" onclick="event.stopPropagation(); openAddMembersModal('${p.id}', '${escapeHtml(p.name)}')">
+                                        <i class="fas fa-user-plus"></i> Agregar miembros
+                                    </div>
+                                    <div class="project-menu-item" onclick="event.stopPropagation(); openConfigureProjectModal('${p.id}', '${escapeHtml(p.name)}', '${escapeHtml(p.key || '')}', '${escapeHtml(p.color || '')}', '${escapeHtml(p.icon || '')}')">
+                                        <i class="fas fa-cog"></i> Configurar
+                                    </div>
+                                    <div class="project-menu-item text-danger" onclick="event.stopPropagation(); deleteProject('${p.id}', '${escapeHtml(p.name)}')">
+                                        <i class="fas fa-trash"></i> Eliminar proyecto
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
                 </div>
             </div>
         `;
-    }).join('');
+    }
+    
+    // Other Projects (Joined by invitation)
+    if (otherProjects.length > 0) {
+        html += `
+            <div class="projects-section">
+                <div class="projects-section-header">
+                    <i class="fas fa-users"></i>
+                    <span>Otros Proyectos</span>
+                    <small style="color: var(--text-muted); font-size: 11px;">Unido por invitación</small>
+                </div>
+                <div class="projects-list">
+                    ${otherProjects.map(p => {
+                        const iconHtml = iconMap[p.icon] || iconMap['folder'];
+                        const iconStyle = p.color ? `background: ${p.color};` : '';
+                        const isActive = selectedProjectId === p.id ? 'active' : '';
+                        const isCreator = false;
+                        
+                        return `
+                            <div class="sidebar-project-item ${isActive}" onclick="selectProject('${p.id}')">
+                                <div class="sidebar-project-icon" style="${iconStyle}">
+                                    ${iconHtml}
+                                </div>
+                                <span class="sidebar-project-name">${escapeHtml(p.name)}</span>
+                                <button class="sidebar-project-menu-btn" onclick="event.stopPropagation(); toggleProjectMenu('${p.id}', '${escapeHtml(p.name)}', ${isCreator})">
+                                    <i class="fas fa-ellipsis-v"></i>
+                                </button>
+                                <div class="project-menu" id="project-menu-${p.id}" style="display: none;">
+                                    <div class="project-menu-item text-danger" onclick="event.stopPropagation(); leaveProject('${p.id}', '${escapeHtml(p.name)}')">
+                                        <i class="fas fa-sign-out-alt"></i> Salir del proyecto
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    }
+    
+    container.innerHTML = html;
 }
 
 function toggleProjectMenu(projectId, projectName, isCreator) {
@@ -3611,7 +3672,19 @@ async function openIssueDetail(storyId) {
     showModal('issue-detail-modal');
 
     try {
-        const story = await apiRequest(`/api/stories/${storyId}`);
+        // Check cache first to avoid overwriting local changes
+        const storyCacheKey = `story_${storyId}`;
+        let story = taskCache.get(storyCacheKey);
+        
+        if (!story) {
+            console.log('Loading story from API:', storyId);
+            story = await apiRequest(`/api/stories/${storyId}`);
+            // Cache the story for future use
+            taskCache.set(storyCacheKey, story);
+        } else {
+            console.log('Loading story from cache:', storyId);
+        }
+        
         if (story.projectId) {
             try {
                 const boardData = await apiRequest(`/api/stories/project/${story.projectId}/board`);
@@ -3632,6 +3705,7 @@ async function openIssueDetail(storyId) {
 }
 
 function renderIssueDetail(story) {
+    console.log('renderIssueDetail called with story:', story.id, 'subtasks count:', story.tasks?.length);
     const loading = document.getElementById('issue-detail-loading');
     const body = document.getElementById('issue-detail-body');
     const project = projects.find(p => p.id === story.projectId);
@@ -3726,9 +3800,12 @@ async function addIssueComment() {
             })
         });
         if (input) input.value = '';
-        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
-        currentIssueDetail = story;
-        renderIssueDetail(story);
+        // Only reload if not prevented (e.g., after assignment)
+        if (!preventIssueDetailReload) {
+            const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
+            currentIssueDetail = story;
+            renderIssueDetail(story);
+        }
         showToast('Comentario agregado');
     } catch (error) {
         showToast('Error al agregar comentario', 'error');
@@ -4038,28 +4115,42 @@ function filterIssueSubtaskAssigneePicker(taskId, query) {
 function selectIssueSubtaskAssigneeFromPicker(taskId, assigneeId, buttonEl) {
     const row = document.querySelector(`.issue-subtask-row[data-task-id="${taskId}"]`);
     const trigger = row?.querySelector('.issue-assignee-trigger');
-    const triggerLabel = trigger?.querySelector('span:last-child');
     const avatar = trigger?.querySelector('.subtask-avatar');
+    const nameSpan = trigger?.querySelector('span:not(.subtask-avatar)');
     
-    if (triggerLabel && avatar && buttonEl) {
+    if (trigger && avatar && nameSpan && buttonEl) {
         const selectedName = buttonEl?.dataset?.memberName || 'Sin asignar';
         const member = boardMembers.find(m => m.id === assigneeId);
         
-        triggerLabel.textContent = selectedName;
+        // Update the name span
+        nameSpan.textContent = selectedName;
         
+        // Update the avatar
         if (member) {
             avatar.textContent = getInitials(member.name);
             avatar.className = 'subtask-avatar assigned';
-            avatar.style.background = getUserColor(member.id) + ' !important';
+            const userColor = getUserColor(member.id);
+            avatar.style.setProperty('--user-color', userColor);
+            avatar.style.background = userColor;
         } else {
             avatar.textContent = '?';
             avatar.className = 'subtask-avatar unassigned';
+            avatar.style.removeProperty('--user-color');
             avatar.style.background = '';
         }
     }
     
     closeAllIssueSubtaskAssigneePickers();
     updateIssueSubtaskAssignee(taskId, assigneeId);
+    
+    // Update task object in currentIssueDetail to reflect the assignment
+    if (currentIssueDetail && currentIssueDetail.subtasks) {
+        const subtask = currentIssueDetail.subtasks.find(st => st.id === taskId);
+        if (subtask) {
+            subtask.assignedToId = assigneeId;
+            subtask.assignedToName = member ? member.name : 'Sin asignar';
+        }
+    }
 }
 
 function closeAllIssueSubtaskAssigneePickers() {
@@ -4102,10 +4193,12 @@ async function createIssueSubtask() {
         if (prioritySelect) prioritySelect.value = '1';
         if (assigneeInput) assigneeInput.value = '';
         
-        // Refresh story data
-        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
-        currentIssueDetail = story;
-        renderIssueDetail(story);
+        // Refresh story data only if not prevented
+        if (!preventIssueDetailReload) {
+            const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
+            currentIssueDetail = story;
+            renderIssueDetail(story);
+        }
         showToast('Subtarea creada');
     } catch (error) {
         showToast('Error al crear subtarea', 'error');
@@ -4165,16 +4258,93 @@ async function updateIssueSubtaskStatus(taskId, status) {
 
 async function updateIssueSubtaskAssignee(taskId, assigneeId) {
     try {
-        await apiRequest(`/api/tasks/${taskId}/assign`, {
+        console.log('Assigning task:', taskId, 'to user:', assigneeId);
+        
+        const response = await apiRequest(`/api/tasks/${taskId}/assign`, {
             method: 'PATCH',
-            body: JSON.stringify({ assignedToId: assigneeId || '' })
+            body: { assignedToId: assigneeId || '' }
         });
-        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
-        currentIssueDetail = story;
-        renderIssueDetail(story);
+        
+        console.log('Assignment response:', response);
+        
+        // Update task in currentIssueDetail without re-rendering the entire UI
+        if (currentIssueDetail && currentIssueDetail.subtasks) {
+            const subtask = currentIssueDetail.subtasks.find(st => st.id === taskId);
+            if (subtask) {
+                subtask.assignedToId = assigneeId;
+                subtask.assignedToName = response.assignedToName || (assigneeId ? boardMembers.find(m => m.id === assigneeId)?.name : null);
+                
+                // Update task cache as well to persist changes
+                const cachedTask = taskCache.get(taskId);
+                if (cachedTask) {
+                    cachedTask.assignedToId = assigneeId;
+                    cachedTask.assignedToName = subtask.assignedToName;
+                    taskCache.set(taskId, cachedTask);
+                }
+                
+                // Update the story cache to prevent reload from API
+                const storyCacheKey = `story_${currentIssueDetail.id}`;
+                const cachedStory = taskCache.get(storyCacheKey);
+                if (cachedStory) {
+                    const storySubtask = cachedStory.subtasks?.find(st => st.id === taskId);
+                    if (storySubtask) {
+                        storySubtask.assignedToId = assigneeId;
+                        storySubtask.assignedToName = subtask.assignedToName;
+                        taskCache.set(storyCacheKey, cachedStory);
+                        console.log('Updated story cache for task:', taskId, 'assigneeId:', assigneeId);
+                    }
+                } else {
+                    console.log('No cached story found for key:', storyCacheKey);
+                }
+                
+                // Update subtask detail modal if it's open and this is the current subtask
+                if (currentSubtaskDetail && currentSubtaskDetail.id === taskId) {
+                    console.log('Updating subtask detail modal for task:', taskId);
+                    currentSubtaskDetail.assignedToId = assigneeId;
+                    currentSubtaskDetail.assignedToName = subtask.assignedToName;
+                    
+                    // Update assignee display in modal
+                    const assigneeDisplay = document.getElementById('subtask-assignee-display');
+                    console.log('Assignee display element found:', !!assigneeDisplay);
+                    
+                    const assignedMember = boardMembers.find(m => m.id === assigneeId);
+                    console.log('Assigned member found:', !!assignedMember, 'for assigneeId:', assigneeId);
+                    
+                    if (assigneeDisplay) {
+                        if (assignedMember) {
+                            const newHTML = `
+                                <span class="subtask-assignee-avatar" style="background: ${getUserColor(assignedMember.id)} !important;">${getInitials(assignedMember.name)}</span>
+                                <span class="subtask-assignee-name">${escapeHtml(assignedMember.name)}</span>
+                            `;
+                            console.log('Setting assignee display HTML:', newHTML);
+                            assigneeDisplay.innerHTML = newHTML;
+                        } else {
+                            const newHTML = `
+                                <span class="subtask-assignee-avatar unassigned">?</span>
+                                <span class="subtask-assignee-name">Sin asignar</span>
+                            `;
+                            console.log('Setting unassigned HTML:', newHTML);
+                            assigneeDisplay.innerHTML = newHTML;
+                        }
+                    }
+                } else {
+                    console.log('Subtask detail modal not open or different task');
+                    console.log('currentSubtaskDetail:', currentSubtaskDetail?.id);
+                    console.log('taskId:', taskId);
+                }
+            }
+        }
+        
+        // Set flag to prevent reload for a short time
+        preventIssueDetailReload = true;
+        setTimeout(() => {
+            preventIssueDetailReload = false;
+        }, 2000); // Reset after 2 seconds
+        
         showToast('Asignacion de subtarea actualizada');
     } catch (error) {
-        showToast('Error al asignar subtarea', 'error');
+        console.error('Error assigning task:', error);
+        showToast('Error al asignar subtarea: ' + error.message, 'error');
     }
 }
 
@@ -4184,9 +4354,12 @@ async function deleteIssueSubtask(taskId) {
 
     try {
         await apiRequest(`/api/tasks/${taskId}`, { method: 'DELETE' });
-        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
-        currentIssueDetail = story;
-        renderIssueDetail(story);
+        // Only reload if not prevented (e.g., after assignment)
+        if (!preventIssueDetailReload) {
+            const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
+            currentIssueDetail = story;
+            renderIssueDetail(story);
+        }
         showToast('Subtarea eliminada');
     } catch (error) {
         showToast('Error al eliminar subtarea', 'error');
@@ -4379,12 +4552,13 @@ async function openSubtaskDetail(taskId, taskKey) {
     showModal('subtask-detail-modal');
     
     try {
-        // Find the task in current issue's subtasks
-        const task = currentIssueDetail?.subtasks?.find(st => st.id === taskId);
+        // Check cache first
+        let task = taskCache.get(taskId);
         
         if (!task) {
-            // If not found locally, fetch from API
+            // If not found in cache, fetch from API
             const fetchedTask = await apiRequest(`/api/tasks/${taskId}`);
+            taskCache.set(taskId, fetchedTask); // Cache for future use
             currentSubtaskDetail = fetchedTask;
         } else {
             currentSubtaskDetail = task;
@@ -4720,7 +4894,7 @@ function insertLinkFromModal(button) {
     if (window.autoSaveTimeout) {
         clearTimeout(window.autoSaveTimeout);
     }
-    window.autoSaveTimeout = setTimeout(saveSubtaskDescription, 2000);
+    // Save only when save button is clicked
 }
 
 function insertSubtaskImage() {
@@ -4935,11 +5109,7 @@ function insertFileFromModal(button) {
         
         modal.remove();
         
-        // Trigger auto-save
-        if (window.autoSaveTimeout) {
-            clearTimeout(window.autoSaveTimeout);
-        }
-        window.autoSaveTimeout = setTimeout(saveSubtaskDescription, 2000);
+        // Save only when save button is clicked
     };
     
     reader.readAsDataURL(file);
@@ -4995,11 +5165,17 @@ function insertImageFromFile(dataUrl, alt, size, align, border) {
     img.style.cursor = 'pointer';
     img.setAttribute('data-image-id', imageId);
     
-    // Create wrapper div
+    // Create wrapper div with proper container styling
     const wrapper = document.createElement('div');
     wrapper.style.margin = '8px 0';
     wrapper.style.position = 'relative';
     wrapper.style.display = 'inline-block';
+    wrapper.style.border = '1px solid rgba(139, 92, 246, 0.1)';
+    wrapper.style.borderRadius = '8px';
+    wrapper.style.padding = '4px';
+    wrapper.style.background = 'transparent';
+    wrapper.style.clear = 'both';
+    wrapper.contentEditable = 'false';
     wrapper.setAttribute('data-image-id', imageId);
     wrapper.className = 'simple-image-wrapper';
     
@@ -5046,6 +5222,27 @@ function insertImageFromFile(dataUrl, alt, size, align, border) {
     wrapper.appendChild(img);
     wrapper.appendChild(controls);
     
+    // Prevent text editing and cursor placement around image
+    wrapper.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+    });
+    
+    wrapper.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+    });
+    
+    wrapper.addEventListener('keydown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    
+    wrapper.addEventListener('input', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    
     // Show controls on hover
     wrapper.addEventListener('mouseenter', () => {
         controls.style.opacity = '1';
@@ -5055,11 +5252,22 @@ function insertImageFromFile(dataUrl, alt, size, align, border) {
         controls.style.opacity = '0';
     });
     
-    // Image click handler - show selection toolbar
+    // Image click handler - no toolbar, just prevent default behavior
     img.onclick = (e) => {
         e.stopPropagation();
-        showImageSelectionToolbar(wrapper, dataUrl, alt, imageId);
+        e.preventDefault();
     };
+    
+    // Prevent any text editing around the image
+    wrapper.addEventListener('selectstart', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    
+    wrapper.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
     
     // Focus editor and insert at cursor position
     editor.focus();
@@ -5075,8 +5283,12 @@ function insertImageFromFile(dataUrl, alt, size, align, border) {
             // Insert the wrapper at cursor position
             range.insertNode(wrapper);
             
-            // Move cursor after the image
-            range.setStartAfter(wrapper);
+            // Add a line break after the image to ensure separation
+            const lineBreak = document.createElement('br');
+            range.insertNode(lineBreak);
+            
+            // Move cursor after the line break
+            range.setStartAfter(lineBreak);
             range.collapse(true);
             selection.removeAllRanges();
             selection.addRange(range);
@@ -5107,7 +5319,7 @@ function removeSimpleImage(imageId) {
             if (window.autoSaveTimeout) {
                 clearTimeout(window.autoSaveTimeout);
             }
-            window.autoSaveTimeout = setTimeout(saveSubtaskDescription, 1000);
+            // Save only when save button is clicked
             showToast('Imagen eliminada', 'success');
         }
     }
@@ -5376,18 +5588,351 @@ function setupImageControls(wrapper) {
 }
 
 function insertFileAsLink(file, dataUrl, alt) {
-    const icon = getFileIcon(file.type);
-    const linkHtml = `
-        <div class="file-attachment" style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; margin: 4px 0; text-decoration: none; color: var(--text-primary);">
-            <i class="fas ${icon}" style="color: var(--primary-purple);"></i>
-            <div>
-                <div style="font-weight: 500; font-size: 14px;">${escapeHtml(file.name)}</div>
-                <div style="font-size: 12px; color: var(--text-muted);">${formatFileSize(file.size)}</div>
-            </div>
-        </div>
-    `;
+    const editor = document.getElementById('subtask-description');
+    if (!editor) {
+        console.error('Editor not found');
+        return;
+    }
     
-    document.execCommand('insertHTML', false, linkHtml);
+    // Remove placeholder text if exists
+    const placeholder = editor.querySelector('.placeholder-text');
+    if (placeholder) {
+        placeholder.remove();
+    }
+    
+    // Clear editor if it only has placeholder
+    if (editor.textContent.trim() === 'Agrega una descripción más detallada...' || 
+        editor.innerHTML.trim() === '<p class="placeholder-text">Agrega una descripción más detallada...</p>') {
+        editor.innerHTML = '';
+    }
+    
+    // Generate unique document ID
+    const documentId = 'doc-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    
+    // Create document icon
+    const icon = getFileIcon(file.type);
+    
+    // Create document element
+    const docElement = document.createElement('div');
+    docElement.style.display = 'inline-flex';
+    docElement.style.alignItems = 'center';
+    docElement.style.gap = '8px';
+    docElement.style.padding = '6px 10px';
+    docElement.style.background = 'rgba(139, 92, 246, 0.05)';
+    docElement.style.border = '1px solid rgba(139, 92, 246, 0.1)';
+    docElement.style.borderRadius = '8px';
+    docElement.style.margin = '6px 0';
+    docElement.style.textDecoration = 'none';
+    docElement.style.color = 'var(--text-primary)';
+    docElement.style.position = 'relative';
+    docElement.style.clear = 'both';
+    docElement.style.cursor = 'pointer';
+    docElement.contentEditable = 'false';
+    docElement.setAttribute('data-document-id', documentId);
+    docElement.setAttribute('data-download-url', dataUrl);
+    docElement.className = 'simple-document-wrapper';
+    
+    // Create icon
+    const iconElement = document.createElement('i');
+    iconElement.className = 'fas ' + icon;
+    iconElement.style.color = 'var(--primary-purple)';
+    iconElement.style.fontSize = '16px';
+    
+    // Create file info container
+    const fileInfo = document.createElement('div');
+    fileInfo.style.display = 'flex';
+    fileInfo.style.flexDirection = 'column';
+    fileInfo.style.gap = '2px';
+    
+    // Create file name
+    const fileName = document.createElement('span');
+    fileName.style.fontWeight = '500';
+    fileName.style.fontSize = '13px';
+    fileName.style.color = 'var(--text-primary)';
+    fileName.textContent = escapeHtml(file.name);
+    
+    // Create file size
+    const fileSize = document.createElement('span');
+    fileSize.style.fontSize = '11px';
+    fileSize.style.color = 'var(--text-muted)';
+    fileSize.textContent = formatFileSize(file.size);
+    
+    // Assemble file info
+    fileInfo.appendChild(fileName);
+    fileInfo.appendChild(fileSize);
+    
+    // Create controls container
+    const controls = document.createElement('div');
+    controls.style.display = 'flex';
+    controls.style.gap = '4px';
+    controls.style.opacity = '0';
+    controls.style.transition = 'opacity 0.2s ease';
+    controls.style.alignItems = 'center';
+    
+    // Create download button
+    const downloadBtn = document.createElement('button');
+    downloadBtn.innerHTML = '<i class="fas fa-download"></i>';
+    downloadBtn.style.background = 'rgba(59, 130, 246, 0.8)';
+    downloadBtn.style.color = 'white';
+    downloadBtn.style.border = 'none';
+    downloadBtn.style.borderRadius = '50%';
+    downloadBtn.style.width = '20px';
+    downloadBtn.style.height = '20px';
+    downloadBtn.style.padding = '0';
+    downloadBtn.style.cursor = 'pointer';
+    downloadBtn.style.fontSize = '10px';
+    downloadBtn.style.display = 'flex';
+    downloadBtn.style.alignItems = 'center';
+    downloadBtn.style.justifyContent = 'center';
+    downloadBtn.title = 'Descargar documento';
+    downloadBtn.onclick = (e) => {
+        e.stopPropagation();
+        const downloadUrl = docElement.getAttribute('data-download-url');
+        if (downloadUrl) {
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = file.name;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    };
+    
+    // Create delete button
+    const deleteBtn = document.createElement('button');
+    deleteBtn.innerHTML = '<i class="fas fa-times"></i>';
+    deleteBtn.style.background = 'rgba(239,68,68,0.8)';
+    deleteBtn.style.color = 'white';
+    deleteBtn.style.border = 'none';
+    deleteBtn.style.borderRadius = '50%';
+    deleteBtn.style.width = '20px';
+    deleteBtn.style.height = '20px';
+    deleteBtn.style.padding = '0';
+    deleteBtn.style.cursor = 'pointer';
+    deleteBtn.style.fontSize = '10px';
+    deleteBtn.style.display = 'flex';
+    deleteBtn.style.alignItems = 'center';
+    deleteBtn.style.justifyContent = 'center';
+    deleteBtn.title = 'Eliminar documento';
+    deleteBtn.onclick = (e) => {
+        e.stopPropagation();
+        removeSimpleDocument(documentId);
+    };
+    
+    // Assemble controls
+    controls.appendChild(downloadBtn);
+    controls.appendChild(deleteBtn);
+    
+    // Assemble the components
+    docElement.appendChild(iconElement);
+    docElement.appendChild(fileInfo);
+    docElement.appendChild(controls);
+    
+    // Click to download functionality
+    docElement.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const downloadUrl = docElement.getAttribute('data-download-url');
+        if (downloadUrl) {
+            // Create download link
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = file.name;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    });
+    
+    // Prevent text editing but allow download
+    docElement.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+    });
+    
+    docElement.addEventListener('keydown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    
+    docElement.addEventListener('input', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    
+    docElement.addEventListener('selectstart', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    
+    docElement.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    
+    // Show controls on hover
+    docElement.addEventListener('mouseenter', () => {
+        controls.style.opacity = '1';
+        docElement.style.background = 'rgba(139, 92, 246, 0.08)';
+        docElement.style.borderColor = 'rgba(139, 92, 246, 0.2)';
+    });
+    
+    docElement.addEventListener('mouseleave', () => {
+        controls.style.opacity = '0';
+        docElement.style.background = 'rgba(139, 92, 246, 0.05)';
+        docElement.style.borderColor = 'rgba(139, 92, 246, 0.1)';
+    });
+    
+    // Focus editor and insert at cursor position
+    editor.focus();
+    
+    try {
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            
+            // Delete any selected content
+            range.deleteContents();
+            
+            // Insert the document element
+            range.insertNode(docElement);
+            
+            // Add line break after document
+            const lineBreak = document.createElement('br');
+            range.insertNode(lineBreak);
+            range.setStartAfter(lineBreak);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        } else {
+            // Fallback: insert at the end
+            editor.appendChild(docElement);
+            const lineBreak = document.createElement('br');
+            editor.appendChild(lineBreak);
+        }
+    } catch (error) {
+        console.error('Document insertion failed:', error);
+        // Fallback: append to editor
+        editor.appendChild(docElement);
+        const lineBreak = document.createElement('br');
+        editor.appendChild(lineBreak);
+    }
+    
+    // Initialize mutation observer for documents
+    initializeDocumentObserver();
+}
+
+function removeSimpleDocument(documentId) {
+    if (confirm('¿Estás seguro de que quieres eliminar este documento?')) {
+        const wrapper = document.querySelector(`[data-document-id="${documentId}"]`);
+        if (wrapper) {
+            wrapper.remove();
+            showToast('Imagen eliminada', 'success');
+        }
+    }
+}
+
+function initializeDocumentObserver() {
+    if (window.documentObserverInitialized) return;
+    
+    const editor = document.getElementById('subtask-description');
+    if (!editor) return;
+    
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                    // Check if this is a document wrapper that was moved
+                    const docWrappers = node.querySelectorAll ? node.querySelectorAll('.simple-document-wrapper') : [];
+                    docWrappers.forEach(wrapper => {
+                        // Re-attach event listeners if needed
+                        if (!wrapper.hasAttribute('data-listeners-attached')) {
+                            attachDocumentEventListeners(wrapper);
+                            wrapper.setAttribute('data-listeners-attached', 'true');
+                        }
+                    });
+                    
+                    // Also check if the node itself is a document wrapper
+                    if (node.classList && node.classList.contains('simple-document-wrapper')) {
+                        if (!node.hasAttribute('data-listeners-attached')) {
+                            attachDocumentEventListeners(node);
+                            node.setAttribute('data-listeners-attached', 'true');
+                        }
+                    }
+                }
+            });
+        });
+    });
+    
+    observer.observe(editor, {
+        childList: true,
+        subtree: true
+    });
+    
+    window.documentObserverInitialized = true;
+}
+
+function attachDocumentEventListeners(wrapper) {
+    const controls = wrapper.querySelector('div:last-child');
+    const downloadBtn = controls.querySelector('button:first-child');
+    const deleteBtn = controls.querySelector('button:last-child');
+    
+    if (downloadBtn) {
+        const documentId = wrapper.getAttribute('data-document-id');
+        downloadBtn.onclick = (e) => {
+            e.stopPropagation();
+            const downloadUrl = wrapper.getAttribute('data-download-url');
+            if (downloadUrl) {
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = wrapper.querySelector('span').textContent;
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        };
+    }
+    
+    if (deleteBtn) {
+        const documentId = wrapper.getAttribute('data-document-id');
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            removeSimpleDocument(documentId);
+        };
+    }
+    
+    // Re-attach click to download functionality
+    wrapper.addEventListener('click', (e) => {
+        if (e.target === downloadBtn || e.target === deleteBtn) return;
+        
+        e.stopPropagation();
+        e.preventDefault();
+        const downloadUrl = wrapper.getAttribute('data-download-url');
+        if (downloadUrl) {
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = wrapper.querySelector('span').textContent;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    });
+    
+    // Re-attach hover effects
+    wrapper.addEventListener('mouseenter', () => {
+        if (controls) controls.style.opacity = '1';
+        wrapper.style.background = 'rgba(139, 92, 246, 0.08)';
+        wrapper.style.borderColor = 'rgba(139, 92, 246, 0.2)';
+    });
+    
+    wrapper.addEventListener('mouseleave', () => {
+        if (controls) controls.style.opacity = '0';
+        wrapper.style.background = 'rgba(139, 92, 246, 0.05)';
+        wrapper.style.borderColor = 'rgba(139, 92, 246, 0.1)';
+    });
 }
 
 function insertSubtaskMention() {
@@ -5689,7 +6234,7 @@ function removeImage(imageId) {
             if (window.autoSaveTimeout) {
                 clearTimeout(window.autoSaveTimeout);
             }
-            window.autoSaveTimeout = setTimeout(saveSubtaskDescription, 1000);
+            // Save only when save button is clicked
             showToast('Imagen eliminada', 'success');
         }
     }
