@@ -249,6 +249,7 @@ public class NotificationDto : Notification
 {
     public string? ProjectName { get; set; }
     public string? CreatorName { get; set; }
+    public string? Status { get; set; } // pending, accepted, rejected for invitations
 }
 
 public class ProjectInvitation

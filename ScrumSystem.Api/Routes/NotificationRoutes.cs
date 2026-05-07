@@ -15,13 +15,15 @@ public static class NotificationRoutes
             using var connection = dbContext.CreateConnection();
             await connection.OpenAsync();
 
-            var sql = @"
-                SELECT CAST(n.Id AS NVARCHAR(36)), CAST(n.UserId AS NVARCHAR(36)) as UserId, CAST(n.ProjectId AS NVARCHAR(36)) as ProjectId,
-                       CAST(n.CreatorId AS NVARCHAR(36)) as CreatorId, n.Title, n.Message, n.Type, n.IsRead, n.CreatedAt,
-                       p.Name as ProjectName, u.Name as CreatorName
+            string sql = @"
+                SELECT CAST(n.Id AS NVARCHAR(36)) as Id, CAST(n.UserId AS NVARCHAR(36)) as UserId, 
+                       CAST(n.ProjectId AS NVARCHAR(36)) as ProjectId, CAST(n.CreatorId AS NVARCHAR(36)) as CreatorId, n.Title, n.Message, n.Type, n.IsRead, n.CreatedAt,
+                       p.Name as ProjectName, u.Name as CreatorName,
+                       ISNULL(pi.Status, 'pending') as InvitationStatus
                 FROM Notifications n
                 LEFT JOIN Projects p ON n.ProjectId = p.Id
                 LEFT JOIN Users u ON n.CreatorId = u.Id
+                LEFT JOIN ProjectInvitations pi ON n.ProjectId = pi.ProjectId AND n.UserId = pi.UserId AND n.Type = 'project_invitation'
                 WHERE CAST(n.UserId AS NVARCHAR(36)) = @UserId
                 ORDER BY n.CreatedAt DESC";
 
@@ -44,7 +46,8 @@ public static class NotificationRoutes
                         IsRead = reader.GetBoolean(7),
                         CreatedAt = reader.GetDateTime(8),
                         ProjectName = reader.IsDBNull(9) ? null : reader.GetString(9),
-                        CreatorName = reader.GetString(10)
+                        CreatorName = reader.IsDBNull(10) ? null : reader.GetString(10),
+                        Status = reader.IsDBNull(11) ? null : reader.GetString(11)
                     });
                 }
             }
