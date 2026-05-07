@@ -64,6 +64,7 @@ function showMainApp() {
         if (userAvatar) {
             const initials = currentUser.name?.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) || 'U';
             userAvatar.textContent = initials;
+            userAvatar.style.background = getUserColor(currentUser.id);
         }
         
         // Load notifications
@@ -609,6 +610,9 @@ async function loadProjectView() {
                 <button class="project-nav-tab ${projectSubTab === 'board' ? 'active' : ''}" onclick="switchProjectTab('board')">
                     Tablero
                 </button>
+                <button class="project-nav-tab ${projectSubTab === 'team-members' ? 'active' : ''}" onclick="switchProjectTab('team-members')">
+                    <i class="fas fa-users"></i> Miembros
+                </button>
             </div>
             
             <div class="project-controls">
@@ -667,7 +671,10 @@ function switchProjectTab(tab) {
     
     document.querySelectorAll('.project-nav-tab').forEach(btn => {
         btn.classList.remove('active');
-        if (btn.textContent.toLowerCase() === tab) btn.classList.add('active');
+        // Check if button onclick contains the tab name
+        if (btn.getAttribute('onclick') && btn.getAttribute('onclick').includes(`'${tab}'`)) {
+            btn.classList.add('active');
+        }
     });
     
     loadProjectContent();
@@ -689,6 +696,299 @@ function loadProjectContent() {
     } else if (projectSubTab === 'board') {
         // Load kanban board directly in project view
         loadProjectBoard();
+    } else if (projectSubTab === 'team-members') {
+        // Load team members view for current project
+        loadProjectTeamMembers();
+    }
+}
+
+
+// Load Project Team Members
+async function loadProjectTeamMembers() {
+    const content = document.getElementById('project-content');
+    if (!content || !selectedProjectId) {
+        content.innerHTML = '<div class="page active"><h2>Selecciona un proyecto</h2></div>';
+        return;
+    }
+    
+    try {
+        // Load project members
+        const members = await apiRequest(`/api/projects/${selectedProjectId}/members`);
+        const project = await apiRequest(`/api/projects/${selectedProjectId}`);
+        
+        if (!project) {
+            content.innerHTML = `
+                <div class="page active">
+                    <div class="error-state">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <h3>Proyecto No Encontrado</h3>
+                        <p>El proyecto seleccionado no existe o ha sido eliminado.</p>
+                        <button class="btn btn-primary" onclick="navigateTo('projects')">
+                            <i class="fas fa-arrow-left"></i> Volver a Proyectos
+                        </button>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+        
+        content.innerHTML = `
+            <div class="page active">
+                <div class="page-header">
+                    <div class="page-header-left">
+                        <div class="page-icon">
+                            <i class="fas fa-users"></i>
+                        </div>
+                        <div>
+                            <h1>Miembros del Proyecto</h1>
+                            <p>${escapeHtml(project.name)} - Gestiona los miembros de este proyecto</p>
+                        </div>
+                    </div>
+                    <div class="page-header-actions">
+                        <button class="btn btn-primary" onclick="showAddProjectMemberModal()">
+                            <i class="fas fa-user-plus"></i>
+                            Agregar Miembro
+                        </button>
+                    </div>
+                </div>
+
+                <div class="team-members-grid" id="project-members-grid">
+                    <!-- Members loaded dynamically -->
+                </div>
+            </div>
+
+            <!-- Add Member Modal -->
+            <div id="add-project-member-modal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3><i class="fas fa-user-plus"></i> Agregar Miembro</h3>
+                        <button class="modal-close" onclick="hideModal('add-project-member-modal')">&times;</button>
+                    </div>
+                    <form id="add-project-member-form" onsubmit="addProjectMember(event)">
+                        <div class="form-group">
+                            <label>Email del Usuario *</label>
+                            <input type="email" id="project-member-email" required placeholder="correo@ejemplo.com">
+                        </div>
+                        <div class="form-group">
+                            <label>Rol *</label>
+                            <select id="project-member-role" required>
+                                <option value="Developer">Developer</option>
+                                <option value="Scrum Master">Scrum Master</option>
+                                <option value="Product Owner">Product Owner</option>
+                            </select>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" onclick="hideModal('add-project-member-modal')">Cancelar</button>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-plus"></i> Agregar Miembro
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Edit Member Modal -->
+            <div id="edit-project-member-modal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3><i class="fas fa-user-edit"></i> Editar Miembro</h3>
+                        <button class="modal-close" onclick="hideModal('edit-project-member-modal')">&times;</button>
+                    </div>
+                    <form id="edit-project-member-form" onsubmit="updateProjectMember(event)">
+                        <input type="hidden" id="edit-project-member-id">
+                        <div class="form-group">
+                            <label>Nombre</label>
+                            <input type="text" id="edit-project-member-name" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label>Email</label>
+                            <input type="email" id="edit-project-member-email" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label>Rol *</label>
+                            <select id="edit-project-member-role" required>
+                                <option value="Developer">Developer</option>
+                                <option value="Scrum Master">Scrum Master</option>
+                                <option value="Product Owner">Product Owner</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Fecha de Ingreso</label>
+                            <input type="text" id="edit-project-member-joined" readonly>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" onclick="hideModal('edit-project-member-modal')">Cancelar</button>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Guardar Cambios
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        `;
+        
+        // Render members
+        renderProjectMembers(members);
+    } catch (error) {
+        showToast('Error cargando miembros: ' + error.message, 'error');
+    }
+}
+
+// Render project members
+function renderProjectMembers(members) {
+    const grid = document.getElementById('project-members-grid');
+    if (!grid) return;
+    
+    if (members.length === 0) {
+        grid.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-users"></i>
+                <h3>No hay miembros</h3>
+                <p>Agrega miembros al proyecto para comenzar a gestionar el equipo.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    grid.innerHTML = members.map(member => {
+        const initials = getInitials(member.name);
+        const userColor = getUserColor(member.id);
+        const joinedDate = new Date(member.joinedAt).toLocaleDateString('es-ES');
+        const isOwner = member.role === 'Product Owner';
+        
+        return `
+            <div class="team-member-card">
+                <div class="member-header">
+                    <div class="member-avatar" style="background: ${userColor};">
+                        ${initials}
+                    </div>
+                    <div class="member-info">
+                        <div class="member-name">${escapeHtml(member.name)}</div>
+                        <div class="member-email">${escapeHtml(member.email)}</div>
+                    </div>
+                </div>
+                
+                <div class="member-details">
+                    <div class="detail-item">
+                        <span class="detail-label">Rol</span>
+                        <span class="detail-value">${member.role}</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Fecha Ingreso</span>
+                        <span class="detail-value">${joinedDate}</span>
+                    </div>
+                </div>
+                
+                <div class="member-actions">
+                    <button class="btn btn-secondary" onclick="editProjectMember('${member.id}')">
+                        <i class="fas fa-edit"></i> Editar
+                    </button>
+                    <button class="btn btn-danger" onclick="removeProjectMember('${member.id}')" ${isOwner ? 'disabled title="No puedes eliminar al Product Owner"' : ''}>
+                        <i class="fas fa-trash"></i> Eliminar
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Show add project member modal
+function showAddProjectMemberModal() {
+    showModal('add-project-member-modal');
+}
+
+// Add project member
+async function addProjectMember(event) {
+    event.preventDefault();
+    
+    const email = document.getElementById('project-member-email').value;
+    const role = document.getElementById('project-member-role').value;
+    
+    if (!email || !role) {
+        showToast('Todos los campos son requeridos', 'error');
+        return;
+    }
+    
+    try {
+        // Search user by email
+        const user = await apiRequest(`/api/users/search?email=${encodeURIComponent(email)}`);
+        if (!user || !user.id) {
+            showToast('Usuario no encontrado', 'error');
+            return;
+        }
+        
+        // Add member to project
+        await apiRequest(`/api/projects/${selectedProjectId}/members`, {
+            method: 'POST',
+            body: JSON.stringify({
+                userId: user.id,
+                role: role
+            })
+        });
+        
+        showToast('Miembro agregado exitosamente', 'success');
+        hideModal('add-project-member-modal');
+        loadProjectTeamMembers();
+    } catch (error) {
+        showToast('Error agregando miembro: ' + error.message, 'error');
+    }
+}
+
+// Edit project member
+async function editProjectMember(memberId) {
+    try {
+        const members = await apiRequest(`/api/projects/${selectedProjectId}/members`);
+        const member = members.find(m => m.id === memberId);
+        if (!member) return;
+        
+        document.getElementById('edit-project-member-id').value = member.id;
+        document.getElementById('edit-project-member-name').value = member.name;
+        document.getElementById('edit-project-member-email').value = member.email;
+        document.getElementById('edit-project-member-role').value = member.role;
+        document.getElementById('edit-project-member-joined').value = new Date(member.joinedAt).toLocaleDateString('es-ES');
+        
+        showModal('edit-project-member-modal');
+    } catch (error) {
+        showToast('Error cargando miembro: ' + error.message, 'error');
+    }
+}
+
+// Update project member
+async function updateProjectMember(event) {
+    event.preventDefault();
+    
+    const memberId = document.getElementById('edit-project-member-id').value;
+    const role = document.getElementById('edit-project-member-role').value;
+    
+    try {
+        await apiRequest(`/api/projects/${selectedProjectId}/members/${memberId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ role })
+        });
+        
+        showToast('Miembro actualizado exitosamente', 'success');
+        hideModal('edit-project-member-modal');
+        loadProjectTeamMembers();
+    } catch (error) {
+        showToast('Error actualizando miembro: ' + error.message, 'error');
+    }
+}
+
+// Remove project member
+async function removeProjectMember(memberId) {
+    if (!confirm('¿Estás seguro de que deseas eliminar a este miembro del proyecto?')) {
+        return;
+    }
+    
+    try {
+        await apiRequest(`/api/projects/${selectedProjectId}/members/${memberId}`, {
+            method: 'DELETE'
+        });
+        
+        showToast('Miembro eliminado exitosamente', 'success');
+        loadProjectTeamMembers();
+    } catch (error) {
+        showToast('Error eliminando miembro: ' + error.message, 'error');
     }
 }
 
@@ -3948,7 +4248,7 @@ function renderIssueSubtasks(tasks) {
                             </div>
                         </div>
                         <div class="issue-status-badge-wrapper">
-                            <select class="issue-status-badge" onchange="updateIssueSubtaskStatus('${task.id}', this.value)" 
+                            <select class="issue-status-badge" data-task-id="${task.id}" onchange="updateIssueSubtaskStatus('${task.id}', this.value)" 
                                 style="background-color: ${statusColors[task.status]}20; color: ${statusColors[task.status]}; border-color: ${statusColors[task.status]}40;">
                                 <option value="Todo" ${task.status === 'Todo' ? 'selected' : ''} style="background: #2d2d3a;">POR HACER</option>
                                 <option value="InProgress" ${task.status === 'InProgress' ? 'selected' : ''} style="background: #2d2d3a;">EN CURSO</option>
@@ -4253,16 +4553,117 @@ async function updateIssueSubtaskDetails(taskId) {
 }
 
 async function updateIssueSubtaskStatus(taskId, status) {
+    console.log('DEBUG: updateIssueSubtaskStatus called', {
+        taskId: taskId,
+        newStatus: status,
+        hasCurrentSubtaskDetail: !!currentSubtaskDetail,
+        currentSubtaskId: currentSubtaskDetail?.id
+    });
+    
     try {
         await apiRequest(`/api/tasks/${taskId}/status`, {
             method: 'PATCH',
             body: JSON.stringify({ status, actualHours: 0 })
         });
-        const story = await apiRequest(`/api/stories/${currentIssueDetail.id}`);
-        currentIssueDetail = story;
-        renderIssueDetail(story);
+        
+        // Update currentSubtaskDetail if it's the same task
+        if (currentSubtaskDetail && currentSubtaskDetail.id === taskId) {
+            console.log('DEBUG: Updating currentSubtaskDetail', {
+                oldStatus: currentSubtaskDetail.status,
+                newStatus: status
+            });
+            currentSubtaskDetail.status = status;
+            
+            // Update the subtask-status select in the modal if open
+            const subtaskStatusSelect = document.getElementById('subtask-status');
+            if (subtaskStatusSelect) {
+                console.log('DEBUG: Updating subtask-status select in modal');
+                subtaskStatusSelect.value = status;
+            }
+        }
+        
+        // Update the task in currentIssueDetail
+        if (currentIssueDetail && currentIssueDetail.tasks) {
+            const subtask = currentIssueDetail.tasks.find(st => st.id === taskId);
+            if (subtask) {
+                console.log('DEBUG: Updating subtask in currentIssueDetail', {
+                    taskId: subtask.id,
+                    oldStatus: subtask.status,
+                    newStatus: status
+                });
+                subtask.status = status;
+            } else {
+                console.log('DEBUG: Subtask not found in currentIssueDetail', {
+                    taskId: taskId,
+                    availableSubtasks: currentIssueDetail.tasks.map(st => ({ id: st.id, status: st.status }))
+                });
+            }
+        }
+        
+        // Only refresh the entire issue detail if no subtask is open
+        // But first ensure our local changes are preserved
+        if (currentIssueDetail && !currentSubtaskDetail) {
+            console.log('DEBUG: No subtask open, updating data then rendering');
+            
+            // Force update the subtask in currentIssueDetail to ensure it has the latest status
+            if (currentIssueDetail.tasks && Array.isArray(currentIssueDetail.tasks)) {
+                const subtask = currentIssueDetail.tasks.find(st => st.id === taskId);
+                if (subtask) {
+                    console.log('DEBUG: Force updating subtask before render', {
+                        taskId: subtask.id,
+                        oldStatus: subtask.status,
+                        newStatus: status
+                    });
+                    subtask.status = status;
+                } else {
+                    console.log('DEBUG: Subtask not found for force update', {
+                        taskId: taskId,
+                        availableSubtasks: currentIssueDetail.tasks.map(st => ({ id: st.id, status: st.status }))
+                    });
+                }
+            } else {
+                console.log('DEBUG: No tasks array available in currentIssueDetail', {
+                    hasTasks: !!currentIssueDetail.tasks,
+                    tasksType: typeof currentIssueDetail.tasks,
+                    tasksValue: currentIssueDetail.tasks
+                });
+            }
+            
+            renderIssueDetail(currentIssueDetail);
+        } else if (currentIssueDetail && currentSubtaskDetail) {
+            console.log('DEBUG: Subtask is open, skipping full render to preserve changes');
+            // Just update progress bar if needed
+            const completed = currentIssueDetail.tasks.filter(task => task.status === 'Done').length;
+            const inProgress = currentIssueDetail.tasks.filter(task => task.status === 'InProgress').length;
+            const totalActive = completed + inProgress;
+            
+            let progressPercent = 0;
+            if (currentIssueDetail.tasks.length > 0) {
+                const completedWeight = completed * 100;
+                const inProgressWeight = inProgress * 50;
+                progressPercent = Math.round((completedWeight + inProgressWeight) / currentIssueDetail.tasks.length);
+            }
+            
+            const progressBar = document.getElementById('issue-subtask-progress-bar');
+            const progressText = document.getElementById('issue-subtask-progress-text');
+            
+            if (progressBar) {
+                progressBar.style.width = `${progressPercent}%`;
+                if (progressPercent === 0) {
+                    progressBar.style.background = '#6b7280';
+                } else if (progressPercent === 100) {
+                    progressBar.style.background = '#22c55e';
+                } else {
+                    progressBar.style.background = '#3b82f6';
+                }
+            }
+            
+            if (progressText) progressText.textContent = `${progressPercent}% completado`;
+        }
+        
         showToast('Subtarea actualizada');
     } catch (error) {
+        console.error('DEBUG: Error in updateIssueSubtaskStatus:', error);
         showToast('Error al actualizar subtarea', 'error');
     }
 }
@@ -4570,16 +4971,31 @@ async function openSubtaskDetail(taskId, taskKey) {
     showModal('subtask-detail-modal');
     
     try {
-        // Check cache first
-        let task = taskCache.get(taskId);
+        // First, try to get the task from currentIssueDetail.tasks (most up-to-date local data)
+        let task = null;
+        if (currentIssueDetail && currentIssueDetail.tasks) {
+            task = currentIssueDetail.tasks.find(t => t.id === taskId);
+        }
         
-        if (!task) {
-            // If not found in cache, fetch from API
-            const fetchedTask = await apiRequest(`/api/tasks/${taskId}`);
-            taskCache.set(taskId, fetchedTask); // Cache for future use
-            currentSubtaskDetail = fetchedTask;
-        } else {
+        if (task) {
+            console.log('DEBUG: Using task from currentIssueDetail.tasks', {
+                taskId: task.id,
+                status: task.status
+            });
             currentSubtaskDetail = task;
+        } else {
+            console.log('DEBUG: Task not found in currentIssueDetail, checking cache/API');
+            // Check cache first
+            task = taskCache.get(taskId);
+            
+            if (!task) {
+                // If not found in cache, fetch from API
+                const fetchedTask = await apiRequest(`/api/tasks/${taskId}`);
+                taskCache.set(taskId, fetchedTask); // Cache for future use
+                currentSubtaskDetail = fetchedTask;
+            } else {
+                currentSubtaskDetail = task;
+            }
         }
         
         renderSubtaskDetail(currentSubtaskDetail, taskKey);
@@ -4688,8 +5104,59 @@ function renderSubtaskDetail(task, taskKey) {
 }
 
 function closeSubtaskDetail() {
+    // First, ensure the currentSubtaskDetail state is saved to currentIssueDetail before clearing
+    if (currentSubtaskDetail && currentIssueDetail && currentIssueDetail.tasks) {
+        const subtask = currentIssueDetail.tasks.find(st => st.id === currentSubtaskDetail.id);
+        if (subtask) {
+            console.log('DEBUG: closeSubtaskDetail - Updating subtask data', {
+                taskId: subtask.id,
+                oldStatus: subtask.status,
+                newStatus: currentSubtaskDetail.status
+            });
+            // Update all properties from currentSubtaskDetail to ensure consistency
+            subtask.status = currentSubtaskDetail.status;
+            subtask.assignedToId = currentSubtaskDetail.assignedToId;
+            subtask.assignedToName = currentSubtaskDetail.assignedToName;
+        } else {
+            console.log('DEBUG: closeSubtaskDetail - Subtask not found in currentIssueDetail');
+        }
+    }
+    
     hideModal('subtask-detail-modal');
     currentSubtaskDetail = null;
+    
+    // Only refresh if we made changes that need to be shown
+    // Avoid renderIssueDetail to prevent overwriting local changes with backend data
+    if (currentIssueDetail && currentIssueDetail.tasks) {
+        console.log('DEBUG: closeSubtaskDetail - Skipping render to preserve local changes');
+        
+        // Just update the progress bar if needed
+        const completed = currentIssueDetail.tasks.filter(task => task.status === 'Done').length;
+        const inProgress = currentIssueDetail.tasks.filter(task => task.status === 'InProgress').length;
+        
+        let progressPercent = 0;
+        if (currentIssueDetail.tasks.length > 0) {
+            const completedWeight = completed * 100;
+            const inProgressWeight = inProgress * 50;
+            progressPercent = Math.round((completedWeight + inProgressWeight) / currentIssueDetail.tasks.length);
+        }
+        
+        const progressBar = document.getElementById('issue-subtask-progress-bar');
+        const progressText = document.getElementById('issue-subtask-progress-text');
+        
+        if (progressBar) {
+            progressBar.style.width = `${progressPercent}%`;
+            if (progressPercent === 0) {
+                progressBar.style.background = '#6b7280';
+            } else if (progressPercent === 100) {
+                progressBar.style.background = '#22c55e';
+            } else {
+                progressBar.style.background = '#3b82f6';
+            }
+        }
+        
+        if (progressText) progressText.textContent = `${progressPercent}% completado`;
+    }
 }
 
 function editSubtask() {
@@ -4701,16 +5168,116 @@ function editSubtask() {
 async function updateSubtaskStatus(status) {
     if (!currentSubtaskDetail) return;
     
+    console.log('DEBUG: updateSubtaskStatus called', {
+        taskId: currentSubtaskDetail.id,
+        newStatus: status,
+        currentStatus: currentSubtaskDetail.status
+    });
+    
     try {
-        await apiRequest(`/api/tasks/${currentSubtaskDetail.id}/status`, 'PUT', { status });
+        await apiRequest(`/api/tasks/${currentSubtaskDetail.id}/status`, {
+            method: 'PATCH',
+            body: { status }
+        });
         currentSubtaskDetail.status = status;
         showToast('Estado actualizado', 'success');
         
-        // Refresh parent issue detail if open
-        if (currentIssueDetail) {
-            renderIssueSubtasks(currentIssueDetail.subtasks || []);
+        // Update the task in currentIssueDetail immediately
+        if (currentIssueDetail && currentIssueDetail.subtasks) {
+            const subtask = currentIssueDetail.subtasks.find(st => st.id === currentSubtaskDetail.id);
+            if (subtask) {
+                console.log('DEBUG: Updating subtask in currentIssueDetail', {
+                    taskId: subtask.id,
+                    oldStatus: subtask.status,
+                    newStatus: status
+                });
+                subtask.status = status;
+            } else {
+                console.log('DEBUG: Subtask not found in currentIssueDetail', {
+                    taskId: currentSubtaskDetail.id,
+                    availableSubtasks: currentIssueDetail.subtasks.map(st => ({ id: st.id, status: st.status }))
+                });
+            }
+        }
+        
+        // Force immediate update of the issue-status-badge in the DOM
+        const selector = `.issue-status-badge[data-task-id="${currentSubtaskDetail.id}"]`;
+        console.log('DEBUG: Looking for status badge with selector:', selector);
+        const statusBadge = document.querySelector(selector);
+        console.log('DEBUG: Status badge found:', !!statusBadge);
+        
+        if (statusBadge) {
+            console.log('DEBUG: Updating status badge', {
+                oldValue: statusBadge.value,
+                newValue: status
+            });
+            statusBadge.value = status;
+            const statusColors = { Todo: '#6b7280', InProgress: '#3b82f6', Done: '#22c55e' };
+            
+            // Force style update by removing and re-adding the style attribute
+            const newStyles = `background-color: ${statusColors[status]}20 !important; color: ${statusColors[status]} !important; border-color: ${statusColors[status]}40 !important;`;
+            statusBadge.setAttribute('style', newStyles);
+            
+            // Also update the selected option to ensure consistency
+            const selectedOption = statusBadge.querySelector(`option[value="${status}"]`);
+            if (selectedOption) {
+                selectedOption.selected = true;
+            }
+        } else {
+            // Fallback: try to find any status badge for this task
+            const allBadges = document.querySelectorAll('.issue-status-badge');
+            console.log('DEBUG: All status badges found:', allBadges.length);
+            allBadges.forEach((badge, index) => {
+                console.log(`DEBUG: Badge ${index}:`, {
+                    value: badge.value,
+                    taskId: badge.getAttribute('data-task-id'),
+                    onchange: badge.getAttribute('onchange')
+                });
+            });
+        }
+        
+        // Also update the row status display
+        const rowSelector = `.issue-subtask-row[data-task-id="${currentSubtaskDetail.id}"] .subtask-status`;
+        console.log('DEBUG: Looking for status cell with selector:', rowSelector);
+        const statusCell = document.querySelector(rowSelector);
+        if (statusCell) {
+            const statusLabels = { Todo: 'POR HACER', InProgress: 'EN CURSO', Done: 'FINALIZADO' };
+            const statusColors = { Todo: '#6b7280', InProgress: '#3b82f6', Done: '#22c55e' };
+            statusCell.textContent = statusLabels[status];
+            statusCell.style.color = statusColors[status];
+        }
+        
+        // Refresh progress bar
+        if (currentIssueDetail && currentIssueDetail.subtasks) {
+            const completed = currentIssueDetail.subtasks.filter(task => task.status === 'Done').length;
+            const inProgress = currentIssueDetail.subtasks.filter(task => task.status === 'InProgress').length;
+            const totalActive = completed + inProgress;
+            
+            let progressPercent = 0;
+            if (currentIssueDetail.subtasks.length > 0) {
+                const completedWeight = completed * 100;
+                const inProgressWeight = inProgress * 50;
+                progressPercent = Math.round((completedWeight + inProgressWeight) / currentIssueDetail.subtasks.length);
+            }
+            
+            const progressBar = document.getElementById('issue-subtask-progress-bar');
+            const progressText = document.getElementById('issue-subtask-progress-text');
+            
+            if (progressBar) {
+                progressBar.style.width = `${progressPercent}%`;
+                if (progressPercent === 0) {
+                    progressBar.style.background = '#6b7280';
+                } else if (progressPercent === 100) {
+                    progressBar.style.background = '#22c55e';
+                } else {
+                    progressBar.style.background = '#3b82f6';
+                }
+            }
+            
+            if (progressText) progressText.textContent = `${progressPercent}% completado`;
         }
     } catch (error) {
+        console.error('DEBUG: Error in updateSubtaskStatus:', error);
         showToast('Error al actualizar estado', 'error');
     }
 }

@@ -47,13 +47,39 @@ public static class ProjectRoutes
             return Results.Ok(projects);
         });
 
-        group.MapGet("/{id}", (string id, AppDataStore store) =>
+        group.MapGet("/{id}", async (string id, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var sql = @"
+                SELECT CAST(Id AS NVARCHAR(36)) as Id, Name, Description, [Key], Color, Icon, 
+                       CAST(CreatorId AS NVARCHAR(36)) as CreatorId, CreatedAt
+                FROM Projects 
+                WHERE Id = @Id";
+
+            using var cmd = new SqlCommand(sql, connection);
+            cmd.Parameters.AddWithValue("@Id", id);
+            
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
             {
-                var project = store.Data.Projects.FirstOrDefault(p => p.Id == id);
-                return project is null ? Results.NotFound() : Results.Ok(ToProjectDto(project, store));
+                return Results.NotFound();
             }
+
+            var project = new
+            {
+                Id = reader.GetString(0),
+                Name = reader.GetString(1),
+                Description = reader.IsDBNull(2) ? null : reader.GetString(2),
+                Key = reader.IsDBNull(3) ? null : reader.GetString(3),
+                Color = reader.IsDBNull(4) ? null : reader.GetString(4),
+                Icon = reader.IsDBNull(5) ? null : reader.GetString(5),
+                CreatorId = reader.GetString(6),
+                CreatedAt = reader.GetDateTime(7)
+            };
+
+            return Results.Ok(project);
         });
 
         group.MapPost("/", async (CreateProjectRequest request, DatabaseContext dbContext) =>
@@ -132,7 +158,7 @@ public static class ProjectRoutes
             await connection.OpenAsync();
 
             // Verificar que el proyecto existe
-            using (var checkCmd = new SqlCommand("SELECT COUNT(*) FROM Projects WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
+            using (var checkCmd = new SqlCommand("SELECT COUNT(*) FROM Projects WHERE Id = @Id", connection))
             {
                 checkCmd.Parameters.AddWithValue("@Id", id);
                 var count = (int)await checkCmd.ExecuteScalarAsync();
@@ -179,7 +205,7 @@ public static class ProjectRoutes
             // Verificar que el proyecto existe
             string projectName = "";
             string creatorId = "";
-            using (var projectCmd = new SqlCommand("SELECT Name, CAST(CreatorId AS NVARCHAR(36)) FROM Projects WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
+            using (var projectCmd = new SqlCommand("SELECT Name, CAST(CreatorId AS NVARCHAR(36)) FROM Projects WHERE Id = @Id", connection))
             {
                 projectCmd.Parameters.AddWithValue("@Id", id);
                 using var reader = await projectCmd.ExecuteReaderAsync();
