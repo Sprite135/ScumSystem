@@ -4553,85 +4553,43 @@ async function updateIssueSubtaskDetails(taskId) {
 }
 
 async function updateIssueSubtaskStatus(taskId, status) {
-    console.log('DEBUG: updateIssueSubtaskStatus called', {
-        taskId: taskId,
-        newStatus: status,
-        hasCurrentSubtaskDetail: !!currentSubtaskDetail,
-        currentSubtaskId: currentSubtaskDetail?.id
-    });
+    if (!currentIssueDetail) return;
     
     try {
-        await apiRequest(`/api/tasks/${taskId}/status`, {
-            method: 'PATCH',
-            body: JSON.stringify({ status, actualHours: 0 })
-        });
+        await apiRequest(`/api/tasks/${taskId}/status`, { method: 'PATCH', body: { status } });
         
-        // Update currentSubtaskDetail if it's the same task
+        // Update currentSubtaskDetail if it's open
         if (currentSubtaskDetail && currentSubtaskDetail.id === taskId) {
-            console.log('DEBUG: Updating currentSubtaskDetail', {
-                oldStatus: currentSubtaskDetail.status,
-                newStatus: status
-            });
             currentSubtaskDetail.status = status;
             
             // Update the subtask-status select in the modal if open
             const subtaskStatusSelect = document.getElementById('subtask-status');
             if (subtaskStatusSelect) {
-                console.log('DEBUG: Updating subtask-status select in modal');
                 subtaskStatusSelect.value = status;
             }
         }
         
         // Update the task in currentIssueDetail
-        if (currentIssueDetail && currentIssueDetail.tasks) {
+        if (currentIssueDetail.tasks) {
             const subtask = currentIssueDetail.tasks.find(st => st.id === taskId);
             if (subtask) {
-                console.log('DEBUG: Updating subtask in currentIssueDetail', {
-                    taskId: subtask.id,
-                    oldStatus: subtask.status,
-                    newStatus: status
-                });
                 subtask.status = status;
-            } else {
-                console.log('DEBUG: Subtask not found in currentIssueDetail', {
-                    taskId: taskId,
-                    availableSubtasks: currentIssueDetail.tasks.map(st => ({ id: st.id, status: st.status }))
-                });
             }
         }
         
         // Only refresh the entire issue detail if no subtask is open
         // But first ensure our local changes are preserved
         if (currentIssueDetail && !currentSubtaskDetail) {
-            console.log('DEBUG: No subtask open, updating data then rendering');
-            
             // Force update the subtask in currentIssueDetail to ensure it has the latest status
             if (currentIssueDetail.tasks && Array.isArray(currentIssueDetail.tasks)) {
                 const subtask = currentIssueDetail.tasks.find(st => st.id === taskId);
                 if (subtask) {
-                    console.log('DEBUG: Force updating subtask before render', {
-                        taskId: subtask.id,
-                        oldStatus: subtask.status,
-                        newStatus: status
-                    });
                     subtask.status = status;
-                } else {
-                    console.log('DEBUG: Subtask not found for force update', {
-                        taskId: taskId,
-                        availableSubtasks: currentIssueDetail.tasks.map(st => ({ id: st.id, status: st.status }))
-                    });
                 }
-            } else {
-                console.log('DEBUG: No tasks array available in currentIssueDetail', {
-                    hasTasks: !!currentIssueDetail.tasks,
-                    tasksType: typeof currentIssueDetail.tasks,
-                    tasksValue: currentIssueDetail.tasks
-                });
             }
             
             renderIssueDetail(currentIssueDetail);
         } else if (currentIssueDetail && currentSubtaskDetail) {
-            console.log('DEBUG: Subtask is open, skipping full render to preserve changes');
             // Just update progress bar if needed
             const completed = currentIssueDetail.tasks.filter(task => task.status === 'Done').length;
             const inProgress = currentIssueDetail.tasks.filter(task => task.status === 'InProgress').length;
@@ -4663,7 +4621,7 @@ async function updateIssueSubtaskStatus(taskId, status) {
         
         showToast('Subtarea actualizada');
     } catch (error) {
-        console.error('DEBUG: Error in updateIssueSubtaskStatus:', error);
+        console.error('Error in updateIssueSubtaskStatus:', error);
         showToast('Error al actualizar subtarea', 'error');
     }
 }
@@ -4978,13 +4936,8 @@ async function openSubtaskDetail(taskId, taskKey) {
         }
         
         if (task) {
-            console.log('DEBUG: Using task from currentIssueDetail.tasks', {
-                taskId: task.id,
-                status: task.status
-            });
             currentSubtaskDetail = task;
         } else {
-            console.log('DEBUG: Task not found in currentIssueDetail, checking cache/API');
             // Check cache first
             task = taskCache.get(taskId);
             
@@ -5108,17 +5061,10 @@ function closeSubtaskDetail() {
     if (currentSubtaskDetail && currentIssueDetail && currentIssueDetail.tasks) {
         const subtask = currentIssueDetail.tasks.find(st => st.id === currentSubtaskDetail.id);
         if (subtask) {
-            console.log('DEBUG: closeSubtaskDetail - Updating subtask data', {
-                taskId: subtask.id,
-                oldStatus: subtask.status,
-                newStatus: currentSubtaskDetail.status
-            });
             // Update all properties from currentSubtaskDetail to ensure consistency
             subtask.status = currentSubtaskDetail.status;
             subtask.assignedToId = currentSubtaskDetail.assignedToId;
             subtask.assignedToName = currentSubtaskDetail.assignedToName;
-        } else {
-            console.log('DEBUG: closeSubtaskDetail - Subtask not found in currentIssueDetail');
         }
     }
     
@@ -5128,8 +5074,6 @@ function closeSubtaskDetail() {
     // Only refresh if we made changes that need to be shown
     // Avoid renderIssueDetail to prevent overwriting local changes with backend data
     if (currentIssueDetail && currentIssueDetail.tasks) {
-        console.log('DEBUG: closeSubtaskDetail - Skipping render to preserve local changes');
-        
         // Just update the progress bar if needed
         const completed = currentIssueDetail.tasks.filter(task => task.status === 'Done').length;
         const inProgress = currentIssueDetail.tasks.filter(task => task.status === 'InProgress').length;
@@ -5168,12 +5112,6 @@ function editSubtask() {
 async function updateSubtaskStatus(status) {
     if (!currentSubtaskDetail) return;
     
-    console.log('DEBUG: updateSubtaskStatus called', {
-        taskId: currentSubtaskDetail.id,
-        newStatus: status,
-        currentStatus: currentSubtaskDetail.status
-    });
-    
     try {
         await apiRequest(`/api/tasks/${currentSubtaskDetail.id}/status`, {
             method: 'PATCH',
@@ -5183,34 +5121,18 @@ async function updateSubtaskStatus(status) {
         showToast('Estado actualizado', 'success');
         
         // Update the task in currentIssueDetail immediately
-        if (currentIssueDetail && currentIssueDetail.subtasks) {
-            const subtask = currentIssueDetail.subtasks.find(st => st.id === currentSubtaskDetail.id);
+        if (currentIssueDetail && currentIssueDetail.tasks) {
+            const subtask = currentIssueDetail.tasks.find(st => st.id === currentSubtaskDetail.id);
             if (subtask) {
-                console.log('DEBUG: Updating subtask in currentIssueDetail', {
-                    taskId: subtask.id,
-                    oldStatus: subtask.status,
-                    newStatus: status
-                });
                 subtask.status = status;
-            } else {
-                console.log('DEBUG: Subtask not found in currentIssueDetail', {
-                    taskId: currentSubtaskDetail.id,
-                    availableSubtasks: currentIssueDetail.subtasks.map(st => ({ id: st.id, status: st.status }))
-                });
             }
         }
         
         // Force immediate update of the issue-status-badge in the DOM
         const selector = `.issue-status-badge[data-task-id="${currentSubtaskDetail.id}"]`;
-        console.log('DEBUG: Looking for status badge with selector:', selector);
         const statusBadge = document.querySelector(selector);
-        console.log('DEBUG: Status badge found:', !!statusBadge);
         
         if (statusBadge) {
-            console.log('DEBUG: Updating status badge', {
-                oldValue: statusBadge.value,
-                newValue: status
-            });
             statusBadge.value = status;
             const statusColors = { Todo: '#6b7280', InProgress: '#3b82f6', Done: '#22c55e' };
             
@@ -5223,22 +5145,10 @@ async function updateSubtaskStatus(status) {
             if (selectedOption) {
                 selectedOption.selected = true;
             }
-        } else {
-            // Fallback: try to find any status badge for this task
-            const allBadges = document.querySelectorAll('.issue-status-badge');
-            console.log('DEBUG: All status badges found:', allBadges.length);
-            allBadges.forEach((badge, index) => {
-                console.log(`DEBUG: Badge ${index}:`, {
-                    value: badge.value,
-                    taskId: badge.getAttribute('data-task-id'),
-                    onchange: badge.getAttribute('onchange')
-                });
-            });
         }
         
         // Also update the row status display
         const rowSelector = `.issue-subtask-row[data-task-id="${currentSubtaskDetail.id}"] .subtask-status`;
-        console.log('DEBUG: Looking for status cell with selector:', rowSelector);
         const statusCell = document.querySelector(rowSelector);
         if (statusCell) {
             const statusLabels = { Todo: 'POR HACER', InProgress: 'EN CURSO', Done: 'FINALIZADO' };
@@ -5248,16 +5158,16 @@ async function updateSubtaskStatus(status) {
         }
         
         // Refresh progress bar
-        if (currentIssueDetail && currentIssueDetail.subtasks) {
-            const completed = currentIssueDetail.subtasks.filter(task => task.status === 'Done').length;
-            const inProgress = currentIssueDetail.subtasks.filter(task => task.status === 'InProgress').length;
+        if (currentIssueDetail && currentIssueDetail.tasks) {
+            const completed = currentIssueDetail.tasks.filter(task => task.status === 'Done').length;
+            const inProgress = currentIssueDetail.tasks.filter(task => task.status === 'InProgress').length;
             const totalActive = completed + inProgress;
             
             let progressPercent = 0;
-            if (currentIssueDetail.subtasks.length > 0) {
+            if (currentIssueDetail.tasks.length > 0) {
                 const completedWeight = completed * 100;
                 const inProgressWeight = inProgress * 50;
-                progressPercent = Math.round((completedWeight + inProgressWeight) / currentIssueDetail.subtasks.length);
+                progressPercent = Math.round((completedWeight + inProgressWeight) / currentIssueDetail.tasks.length);
             }
             
             const progressBar = document.getElementById('issue-subtask-progress-bar');
@@ -5277,7 +5187,7 @@ async function updateSubtaskStatus(status) {
             if (progressText) progressText.textContent = `${progressPercent}% completado`;
         }
     } catch (error) {
-        console.error('DEBUG: Error in updateSubtaskStatus:', error);
+        console.error('Error in updateSubtaskStatus:', error);
         showToast('Error al actualizar estado', 'error');
     }
 }
