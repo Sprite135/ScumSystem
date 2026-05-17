@@ -126,12 +126,13 @@ public static class ProjectRoutes
             }
 
             // Add creator as Owner
-            var addMemberSql = "INSERT INTO ProjectMembers (Id, ProjectId, UserId, JoinedAt) VALUES (@Id, @ProjectId, @UserId, @JoinedAt)";
+            var addMemberSql = "INSERT INTO ProjectMembers (Id, ProjectId, UserId, Role, JoinedAt) VALUES (@Id, @ProjectId, @UserId, @Role, @JoinedAt)";
             using (var memberCmd = new SqlCommand(addMemberSql, connection))
             {
                 memberCmd.Parameters.AddWithValue("@Id", Guid.NewGuid());
                 memberCmd.Parameters.AddWithValue("@ProjectId", projectId);
                 memberCmd.Parameters.AddWithValue("@UserId", Guid.Parse(request.CreatedById));
+                memberCmd.Parameters.AddWithValue("@Role", "Product Owner");
                 memberCmd.Parameters.AddWithValue("@JoinedAt", createdAt);
                 await memberCmd.ExecuteNonQueryAsync();
             }
@@ -170,9 +171,11 @@ public static class ProjectRoutes
 
             // Obtener miembros del proyecto
             var sql = @"
-                SELECT CAST(pm.UserId AS NVARCHAR(36)) as Id, u.Name, u.Email, u.Role, pm.JoinedAt
+                SELECT CAST(pm.UserId AS NVARCHAR(36)) as Id, u.Name, u.Email, pm.Role, pm.JoinedAt,
+                       CAST(CASE WHEN p.CreatorId = pm.UserId THEN 1 ELSE 0 END AS BIT) as IsCreator
                 FROM ProjectMembers pm
                 INNER JOIN Users u ON pm.UserId = u.Id
+                INNER JOIN Projects p ON pm.ProjectId = p.Id
                 WHERE CAST(pm.ProjectId AS NVARCHAR(36)) = @ProjectId
                 ORDER BY u.Name";
 
@@ -189,7 +192,8 @@ public static class ProjectRoutes
                         Name = reader.GetString(1),
                         Email = reader.GetString(2),
                         Role = reader.GetString(3),
-                        JoinedAt = reader.GetDateTime(4)
+                        JoinedAt = reader.GetDateTime(4),
+                        IsCreator = reader.GetBoolean(5)
                     });
                 }
             }
@@ -253,6 +257,7 @@ public static class ProjectRoutes
             }
 
             // Crear invitación pendiente
+            var memberRole = NormalizeProjectRole(request.Role);
             var invitationId = Guid.NewGuid();
             var createdAt = DateTime.UtcNow;
             using (var insertCmd = new SqlCommand(@"
@@ -263,7 +268,7 @@ public static class ProjectRoutes
                 insertCmd.Parameters.AddWithValue("@ProjectId", Guid.Parse(id));
                 insertCmd.Parameters.AddWithValue("@UserId", Guid.Parse(request.UserId));
                 insertCmd.Parameters.AddWithValue("@InvitedById", Guid.Parse(creatorId));
-                insertCmd.Parameters.AddWithValue("@Role", "Developer");
+                insertCmd.Parameters.AddWithValue("@Role", memberRole);
                 insertCmd.Parameters.AddWithValue("@Status", "pending");
                 insertCmd.Parameters.AddWithValue("@CreatedAt", createdAt);
                 await insertCmd.ExecuteNonQueryAsync();
@@ -289,6 +294,75 @@ public static class ProjectRoutes
         });
 
         // Aceptar invitación
+        group.MapPut("/{id}/members/{memberId}", async (string id, string memberId, UpdateProjectMemberRequest request, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            var role = NormalizeProjectRole(request.Role);
+            using (var projectCmd = new SqlCommand("SELECT CAST(CreatorId AS NVARCHAR(36)) FROM Projects WHERE CAST(Id AS NVARCHAR(36)) = @ProjectId", connection))
+            {
+                projectCmd.Parameters.AddWithValue("@ProjectId", id);
+                var creatorId = (await projectCmd.ExecuteScalarAsync())?.ToString();
+                if (creatorId is null)
+                {
+                    return Results.NotFound(new { message = "Proyecto no encontrado" });
+                }
+
+                if (string.Equals(creatorId, memberId, StringComparison.OrdinalIgnoreCase) && role != "Product Owner")
+                {
+                    return Results.BadRequest(new { message = "El creador debe conservar el rol Product Owner" });
+                }
+            }
+
+            using var cmd = new SqlCommand(@"
+                UPDATE ProjectMembers
+                SET Role = @Role
+                WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId
+                  AND CAST(UserId AS NVARCHAR(36)) = @MemberId", connection);
+            cmd.Parameters.AddWithValue("@ProjectId", id);
+            cmd.Parameters.AddWithValue("@MemberId", memberId);
+            cmd.Parameters.AddWithValue("@Role", role);
+
+            var rowsAffected = await cmd.ExecuteNonQueryAsync();
+            return rowsAffected == 0
+                ? Results.NotFound(new { message = "Miembro no encontrado en el proyecto" })
+                : Results.Ok(new { message = "Rol del miembro actualizado", role });
+        });
+
+        group.MapDelete("/{id}/members/{memberId}", async (string id, string memberId, DatabaseContext dbContext) =>
+        {
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
+
+            using (var projectCmd = new SqlCommand("SELECT CAST(CreatorId AS NVARCHAR(36)) FROM Projects WHERE CAST(Id AS NVARCHAR(36)) = @ProjectId", connection))
+            {
+                projectCmd.Parameters.AddWithValue("@ProjectId", id);
+                var creatorId = (await projectCmd.ExecuteScalarAsync())?.ToString();
+                if (creatorId is null)
+                {
+                    return Results.NotFound(new { message = "Proyecto no encontrado" });
+                }
+
+                if (string.Equals(creatorId, memberId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.BadRequest(new { message = "No puedes eliminar al creador del proyecto" });
+                }
+            }
+
+            using var deleteCmd = new SqlCommand(@"
+                DELETE FROM ProjectMembers
+                WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId
+                  AND CAST(UserId AS NVARCHAR(36)) = @MemberId", connection);
+            deleteCmd.Parameters.AddWithValue("@ProjectId", id);
+            deleteCmd.Parameters.AddWithValue("@MemberId", memberId);
+
+            var rowsAffected = await deleteCmd.ExecuteNonQueryAsync();
+            return rowsAffected == 0
+                ? Results.NotFound(new { message = "Miembro no encontrado en el proyecto" })
+                : Results.Ok(new { message = "Miembro eliminado del proyecto" });
+        });
+
         group.MapPost("/invitations/{invitationId}/accept", async (string invitationId, string userId, DatabaseContext dbContext) =>
         {
             using var connection = dbContext.CreateConnection();
@@ -298,9 +372,9 @@ public static class ProjectRoutes
             try
             {
                 // Verificar invitación - leer datos primero
-                string projectId = "", invitedById = "", projectName = "", status = "";
+                string projectId = "", invitedById = "", projectName = "", status = "", invitationRole = "Developer";
                 using (var checkCmd = new SqlCommand(@"
-                    SELECT CAST(ProjectId AS NVARCHAR(36)), CAST(InvitedById AS NVARCHAR(36)), Status
+                    SELECT CAST(ProjectId AS NVARCHAR(36)), CAST(InvitedById AS NVARCHAR(36)), Status, Role
                     FROM ProjectInvitations 
                     WHERE CAST(Id AS NVARCHAR(36)) = @InvitationId AND CAST(UserId AS NVARCHAR(36)) = @UserId", connection, transaction))
                 {
@@ -316,6 +390,7 @@ public static class ProjectRoutes
                     projectId = reader.GetString(0);
                     invitedById = reader.GetString(1);
                     status = reader.GetString(2);
+                    invitationRole = reader.IsDBNull(3) ? "Developer" : NormalizeProjectRole(reader.GetString(3));
                     reader.Close();
                 }
 
@@ -363,7 +438,7 @@ public static class ProjectRoutes
                     memberCmd.Parameters.AddWithValue("@Id", Guid.NewGuid());
                     memberCmd.Parameters.AddWithValue("@ProjectId", Guid.Parse(projectId));
                     memberCmd.Parameters.AddWithValue("@UserId", Guid.Parse(userId));
-                    memberCmd.Parameters.AddWithValue("@Role", "Developer");
+                    memberCmd.Parameters.AddWithValue("@Role", invitationRole);
                     memberCmd.Parameters.AddWithValue("@JoinedAt", DateTime.UtcNow);
                     await memberCmd.ExecuteNonQueryAsync();
                 }
@@ -684,6 +759,9 @@ public static class ProjectRoutes
                 var deleteCommands = new[]
                 {
                     "DELETE FROM Notifications WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId",
+                    "DELETE FROM RetrospectiveActionItems WHERE CAST(RetrospectiveId AS NVARCHAR(36)) IN (SELECT CAST(r.Id AS NVARCHAR(36)) FROM SprintRetrospectives r INNER JOIN Sprints s ON r.SprintId = s.Id WHERE CAST(s.ProjectId AS NVARCHAR(36)) = @ProjectId)",
+                    "DELETE FROM RetrospectiveItems WHERE CAST(RetrospectiveId AS NVARCHAR(36)) IN (SELECT CAST(r.Id AS NVARCHAR(36)) FROM SprintRetrospectives r INNER JOIN Sprints s ON r.SprintId = s.Id WHERE CAST(s.ProjectId AS NVARCHAR(36)) = @ProjectId)",
+                    "DELETE FROM SprintRetrospectives WHERE CAST(SprintId AS NVARCHAR(36)) IN (SELECT CAST(Id AS NVARCHAR(36)) FROM Sprints WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId)",
                     "DELETE FROM BurndownData WHERE CAST(SprintId AS NVARCHAR(36)) IN (SELECT CAST(Id AS NVARCHAR(36)) FROM Sprints WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId)",
                     "DELETE FROM StandupNotes WHERE CAST(SprintId AS NVARCHAR(36)) IN (SELECT CAST(Id AS NVARCHAR(36)) FROM Sprints WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId)",
                     "DELETE FROM Tasks WHERE CAST(StoryId AS NVARCHAR(36)) IN (SELECT CAST(Id AS NVARCHAR(36)) FROM UserStories WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId)",
@@ -789,5 +867,15 @@ public static class ProjectRoutes
             .ToUpperInvariant();
 
         return string.IsNullOrWhiteSpace(letters) ? "PROJ" : letters;
+    }
+
+    private static string NormalizeProjectRole(string? role)
+    {
+        return role?.Trim().ToLowerInvariant() switch
+        {
+            "product owner" or "productowner" => "Product Owner",
+            "scrum master" or "scrummaster" => "Scrum Master",
+            _ => "Developer"
+        };
     }
 }

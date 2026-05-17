@@ -205,7 +205,7 @@ public static class TaskRoutes
             await connection.OpenAsync();
 
             var sql = @"
-                SELECT t.Id, CAST(t.StoryId AS NVARCHAR(36)) as StoryId, t.Title, t.Description, 
+                SELECT CAST(t.Id AS NVARCHAR(36)) as Id, CAST(t.StoryId AS NVARCHAR(36)) as StoryId, t.Title, t.Description, 
                        t.EstimatedHours, t.ActualHours, t.Status, t.Priority, 
                        CAST(t.AssignedToId AS NVARCHAR(36)) as AssignedToId, u.Name as AssignedToName,
                        us.Title as StoryTitle, t.CreatedAt

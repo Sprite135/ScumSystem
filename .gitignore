@@ -16,6 +16,7 @@ out/
 
 # Build results
 BuildOutput/
+.artifacts/
 *.exe
 *.dll
 *.pdb

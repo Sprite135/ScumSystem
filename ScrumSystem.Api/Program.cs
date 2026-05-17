@@ -48,5 +48,6 @@ app.MapTaskRoutes();
 app.MapStandupRoutes();
 app.MapDashboardRoutes();
 app.MapNotificationRoutes();
+app.MapRetrospectiveRoutes();
 
 app.Run();

@@ -1,4 +1,4 @@
-using ScrumSystem.Api.Data;
+using Microsoft.Data.SqlClient;
 using ScrumSystem.Api.Models;
 
 namespace ScrumSystem.Api.Routes;
@@ -9,42 +9,77 @@ public static class DashboardRoutes
     {
         var group = app.MapGroup("/api/dashboard");
 
-        group.MapGet("/stats", (AppDataStore store) =>
+        group.MapGet("/stats", async (DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
-            {
-                var stats = new DashboardStats
-                {
-                    TotalProjects = store.Data.Projects.Count,
-                    ActiveSprints = store.Data.Sprints.Count(sprint => sprint.Status == "Active"),
-                    TotalStories = store.Data.UserStories.Count,
-                    TotalTasks = store.Data.Tasks.Count,
-                    CompletedTasks = store.Data.Tasks.Count(task => task.Status == "Done")
-                };
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
 
-                stats.PendingTasks = stats.TotalTasks - stats.CompletedTasks;
-                return Results.Ok(stats);
-            }
+            var stats = new DashboardStats
+            {
+                TotalProjects = await CountAsync(connection, "SELECT COUNT(*) FROM Projects"),
+                ActiveSprints = await CountAsync(connection, "SELECT COUNT(*) FROM Sprints WHERE Status = 'Active'"),
+                TotalStories = await CountAsync(connection, "SELECT COUNT(*) FROM UserStories"),
+                TotalTasks = await CountAsync(connection, "SELECT COUNT(*) FROM Tasks"),
+                CompletedTasks = await CountAsync(connection, "SELECT COUNT(*) FROM Tasks WHERE Status = 'Done'")
+            };
+
+            stats.PendingTasks = stats.TotalTasks - stats.CompletedTasks;
+            return Results.Ok(stats);
         });
 
-        group.MapGet("/projects/{projectId}/stats", (string projectId, AppDataStore store) =>
+        group.MapGet("/projects/{projectId}/stats", async (string projectId, DatabaseContext dbContext) =>
         {
-            lock (store.SyncRoot)
-            {
-                var sprintIds = store.Data.Sprints.Where(sprint => sprint.ProjectId == projectId).Select(sprint => sprint.Id).ToHashSet();
-                var activeSprintIds = store.Data.Sprints.Where(sprint => sprint.ProjectId == projectId && sprint.Status == "Active").Select(sprint => sprint.Id).ToHashSet();
-                var stats = new Dictionary<string, object>
-                {
-                    ["totalSprints"] = sprintIds.Count,
-                    ["activeSprints"] = activeSprintIds.Count,
-                    ["backlogStories"] = store.Data.UserStories.Count(story => story.ProjectId == projectId && story.Status == "Backlog"),
-                    ["activeSprintPoints"] = store.Data.UserStories
-                        .Where(story => story.ProjectId == projectId && story.SprintId != null && activeSprintIds.Contains(story.SprintId))
-                        .Sum(story => story.StoryPoints ?? 0)
-                };
+            using var connection = dbContext.CreateConnection();
+            await connection.OpenAsync();
 
-                return Results.Ok(stats);
-            }
+            var stats = new Dictionary<string, object>
+            {
+                ["totalProjects"] = 1,
+                ["totalSprints"] = await CountAsync(connection, "SELECT COUNT(*) FROM Sprints WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId", projectId),
+                ["activeSprints"] = await CountAsync(connection, "SELECT COUNT(*) FROM Sprints WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId AND Status = 'Active'", projectId),
+                ["totalStories"] = await CountAsync(connection, "SELECT COUNT(*) FROM UserStories WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId", projectId),
+                ["backlogStories"] = await CountAsync(connection, "SELECT COUNT(*) FROM UserStories WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId AND SprintId IS NULL", projectId),
+                ["completedStories"] = await CountAsync(connection, "SELECT COUNT(*) FROM UserStories WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId AND Status = 'Done'", projectId),
+                ["totalTasks"] = await CountAsync(connection, @"
+                    SELECT COUNT(*)
+                    FROM Tasks t
+                    INNER JOIN UserStories us ON t.StoryId = us.Id
+                    WHERE CAST(us.ProjectId AS NVARCHAR(36)) = @ProjectId", projectId),
+                ["completedTasks"] = await CountAsync(connection, @"
+                    SELECT COUNT(*)
+                    FROM Tasks t
+                    INNER JOIN UserStories us ON t.StoryId = us.Id
+                    WHERE CAST(us.ProjectId AS NVARCHAR(36)) = @ProjectId AND t.Status = 'Done'", projectId),
+                ["totalStoryPoints"] = await SumAsync(connection, @"
+                    SELECT COALESCE(SUM(StoryPoints), 0)
+                    FROM UserStories
+                    WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId", projectId),
+                ["activeSprintPoints"] = await SumAsync(connection, @"
+                    SELECT COALESCE(SUM(us.StoryPoints), 0)
+                    FROM UserStories us
+                    INNER JOIN Sprints s ON us.SprintId = s.Id
+                    WHERE CAST(us.ProjectId AS NVARCHAR(36)) = @ProjectId AND s.Status = 'Active'", projectId)
+            };
+
+            return Results.Ok(stats);
         });
+    }
+
+    private static async Task<int> CountAsync(SqlConnection connection, string sql, string? projectId = null)
+    {
+        using var cmd = new SqlCommand(sql, connection);
+        if (!string.IsNullOrWhiteSpace(projectId))
+        {
+            cmd.Parameters.AddWithValue("@ProjectId", projectId);
+        }
+
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync());
+    }
+
+    private static async Task<int> SumAsync(SqlConnection connection, string sql, string projectId)
+    {
+        using var cmd = new SqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("@ProjectId", projectId);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync());
     }
 }

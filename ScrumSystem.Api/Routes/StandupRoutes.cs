@@ -16,15 +16,16 @@ public static class StandupRoutes
             await connection.OpenAsync();
 
             var noteId = Guid.NewGuid();
-            var today = DateTime.UtcNow.Date;
+            var noteDate = request.Date == default ? DateTime.UtcNow.Date : request.Date.Date;
 
             using (var insertCmd = new SqlCommand(@"
-                INSERT INTO StandupNotes (Id, SprintId, UserId, Yesterday, Today, Blockers, CreatedAt) 
-                VALUES (@Id, @SprintId, @UserId, @Yesterday, @Today, @Blockers, @CreatedAt)", connection))
+                INSERT INTO StandupNotes (Id, SprintId, UserId, Date, Yesterday, Today, Blockers, CreatedAt) 
+                VALUES (@Id, @SprintId, @UserId, @Date, @Yesterday, @Today, @Blockers, @CreatedAt)", connection))
             {
                 insertCmd.Parameters.AddWithValue("@Id", noteId);
                 insertCmd.Parameters.AddWithValue("@SprintId", Guid.Parse(request.SprintId));
                 insertCmd.Parameters.AddWithValue("@UserId", Guid.Parse(request.UserId));
+                insertCmd.Parameters.AddWithValue("@Date", noteDate);
                 insertCmd.Parameters.AddWithValue("@Yesterday", (object?)request.Yesterday?.Trim() ?? DBNull.Value);
                 insertCmd.Parameters.AddWithValue("@Today", (object?)request.Today?.Trim() ?? DBNull.Value);
                 insertCmd.Parameters.AddWithValue("@Blockers", (object?)request.Blockers?.Trim() ?? DBNull.Value);
@@ -41,8 +42,8 @@ public static class StandupRoutes
             await connection.OpenAsync();
 
             var sql = @"
-                SELECT n.Id, CAST(n.SprintId AS NVARCHAR(36)) as SprintId, CAST(n.UserId AS NVARCHAR(36)) as UserId,
-                       n.Yesterday, n.Today, n.Blockers, n.CreatedAt, u.Name as UserName
+                SELECT CAST(n.Id AS NVARCHAR(36)) as Id, CAST(n.SprintId AS NVARCHAR(36)) as SprintId, CAST(n.UserId AS NVARCHAR(36)) as UserId,
+                       n.Date, n.Yesterday, n.Today, n.Blockers, n.CreatedAt, u.Name as UserName
                 FROM StandupNotes n
                 LEFT JOIN Users u ON n.UserId = u.Id
                 WHERE CAST(n.SprintId AS NVARCHAR(36)) = @SprintId
@@ -60,11 +61,12 @@ public static class StandupRoutes
                         Id = reader.GetString(0),
                         SprintId = reader.GetString(1),
                         UserId = reader.GetString(2),
-                        Yesterday = reader.IsDBNull(3) ? null : reader.GetString(3),
-                        Today = reader.IsDBNull(4) ? null : reader.GetString(4),
-                        Blockers = reader.IsDBNull(5) ? null : reader.GetString(5),
-                        CreatedAt = reader.GetDateTime(6),
-                        UserName = reader.IsDBNull(7) ? null : reader.GetString(7)
+                        Date = reader.GetDateTime(3),
+                        Yesterday = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        Today = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        Blockers = reader.IsDBNull(6) ? null : reader.GetString(6),
+                        CreatedAt = reader.GetDateTime(7),
+                        UserName = reader.IsDBNull(8) ? null : reader.GetString(8)
                     });
                 }
             }
@@ -79,8 +81,8 @@ public static class StandupRoutes
 
             var today = DateTime.UtcNow.Date;
             var sql = @"
-                SELECT n.Id, CAST(n.SprintId AS NVARCHAR(36)) as SprintId, CAST(n.UserId AS NVARCHAR(36)) as UserId,
-                       n.Yesterday, n.Today, n.Blockers, n.CreatedAt, u.Name as UserName
+                SELECT CAST(n.Id AS NVARCHAR(36)) as Id, CAST(n.SprintId AS NVARCHAR(36)) as SprintId, CAST(n.UserId AS NVARCHAR(36)) as UserId,
+                       n.Date, n.Yesterday, n.Today, n.Blockers, n.CreatedAt, u.Name as UserName
                 FROM StandupNotes n
                 LEFT JOIN Users u ON n.UserId = u.Id
                 WHERE CAST(n.SprintId AS NVARCHAR(36)) = @SprintId AND CAST(n.CreatedAt AS DATE) = @Today
@@ -99,11 +101,12 @@ public static class StandupRoutes
                         Id = reader.GetString(0),
                         SprintId = reader.GetString(1),
                         UserId = reader.GetString(2),
-                        Yesterday = reader.IsDBNull(3) ? null : reader.GetString(3),
-                        Today = reader.IsDBNull(4) ? null : reader.GetString(4),
-                        Blockers = reader.IsDBNull(5) ? null : reader.GetString(5),
-                        CreatedAt = reader.GetDateTime(6),
-                        UserName = reader.IsDBNull(7) ? null : reader.GetString(7)
+                        Date = reader.GetDateTime(3),
+                        Yesterday = reader.IsDBNull(4) ? null : reader.GetString(4),
+                        Today = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        Blockers = reader.IsDBNull(6) ? null : reader.GetString(6),
+                        CreatedAt = reader.GetDateTime(7),
+                        UserName = reader.IsDBNull(8) ? null : reader.GetString(8)
                     });
                 }
             }

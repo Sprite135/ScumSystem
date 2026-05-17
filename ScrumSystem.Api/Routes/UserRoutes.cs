@@ -41,7 +41,7 @@ public static class UserRoutes
                 insertCmd.Parameters.AddWithValue("@Name", request.Name.Trim());
                 insertCmd.Parameters.AddWithValue("@Email", request.Email.Trim());
                 insertCmd.Parameters.AddWithValue("@PasswordHash", BCrypt.Net.BCrypt.HashPassword(request.Password));
-                insertCmd.Parameters.AddWithValue("@Role", (int)ParseRole(request.Role));
+                insertCmd.Parameters.AddWithValue("@Role", ParseRole(request.Role).ToString());
                 insertCmd.Parameters.AddWithValue("@AvatarColor", avatarColor);
                 insertCmd.Parameters.AddWithValue("@CreatedAt", createdAt);
                 await insertCmd.ExecuteNonQueryAsync();
@@ -81,7 +81,7 @@ public static class UserRoutes
                 insertCmd.Parameters.AddWithValue("@Name", request.Name.Trim());
                 insertCmd.Parameters.AddWithValue("@Email", request.Email.Trim());
                 insertCmd.Parameters.AddWithValue("@PasswordHash", BCrypt.Net.BCrypt.HashPassword(request.Password));
-                insertCmd.Parameters.AddWithValue("@Role", (int)request.Role);
+                insertCmd.Parameters.AddWithValue("@Role", request.Role.ToString());
                 insertCmd.Parameters.AddWithValue("@AvatarColor", avatarColor);
                 insertCmd.Parameters.AddWithValue("@CreatedAt", createdAt);
                 await insertCmd.ExecuteNonQueryAsync();
@@ -328,10 +328,39 @@ public static class UserRoutes
                     await unassignTasksCmd.ExecuteNonQueryAsync();
                 }
 
+                using (var clearRetroItemsCmd = new SqlCommand(@"
+                    UPDATE RetrospectiveItems SET UserId = NULL
+                    WHERE CAST(UserId AS NVARCHAR(36)) = @UserId", connection, transaction))
+                {
+                    clearRetroItemsCmd.Parameters.AddWithValue("@UserId", id);
+                    await clearRetroItemsCmd.ExecuteNonQueryAsync();
+                }
+
+                using (var clearRetroActionsCmd = new SqlCommand(@"
+                    UPDATE RetrospectiveActionItems
+                    SET AssignedToId = CASE WHEN CAST(AssignedToId AS NVARCHAR(36)) = @UserId THEN NULL ELSE AssignedToId END,
+                        CreatedById = CASE WHEN CAST(CreatedById AS NVARCHAR(36)) = @UserId THEN NULL ELSE CreatedById END
+                    WHERE CAST(AssignedToId AS NVARCHAR(36)) = @UserId OR CAST(CreatedById AS NVARCHAR(36)) = @UserId", connection, transaction))
+                {
+                    clearRetroActionsCmd.Parameters.AddWithValue("@UserId", id);
+                    await clearRetroActionsCmd.ExecuteNonQueryAsync();
+                }
+
+                using (var clearFacilitatorCmd = new SqlCommand(@"
+                    UPDATE SprintRetrospectives SET FacilitatorId = NULL
+                    WHERE CAST(FacilitatorId AS NVARCHAR(36)) = @UserId", connection, transaction))
+                {
+                    clearFacilitatorCmd.Parameters.AddWithValue("@UserId", id);
+                    await clearFacilitatorCmd.ExecuteNonQueryAsync();
+                }
+
                 // Eliminar datos relacionados
                 var deleteCommands = new[]
                 {
                     "DELETE FROM StandupNotes WHERE CAST(UserId AS NVARCHAR(36)) = @UserId",
+                    "DELETE FROM StoryComments WHERE CAST(UserId AS NVARCHAR(36)) = @UserId",
+                    "UPDATE StoryHistory SET UserId = NULL WHERE CAST(UserId AS NVARCHAR(36)) = @UserId",
+                    "DELETE FROM ProjectInvitations WHERE CAST(UserId AS NVARCHAR(36)) = @UserId OR CAST(InvitedById AS NVARCHAR(36)) = @UserId",
                     "DELETE FROM Notifications WHERE CAST(UserId AS NVARCHAR(36)) = @UserId OR CAST(CreatorId AS NVARCHAR(36)) = @UserId",
                     "DELETE FROM ProjectMembers WHERE CAST(UserId AS NVARCHAR(36)) = @UserId",
                     "DELETE FROM Users WHERE CAST(Id AS NVARCHAR(36)) = @UserId"

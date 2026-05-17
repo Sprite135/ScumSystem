@@ -29,7 +29,7 @@ public static class StoryRoutes
                 using var reader = await cmd.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
                 {
-                    var priorityText = ReadPriority(reader, 7);
+                    var updatedPriorityText = ReadPriority(reader, 7);
                     stories.Add(new UserStoryDto
                     {
                         Id = reader.GetString(0),
@@ -39,7 +39,7 @@ public static class StoryRoutes
                         Description = reader.IsDBNull(4) ? null : reader.GetString(4),
                         AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
                         StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                        Priority = priorityText,
+                        Priority = updatedPriorityText,
                         Status = reader.GetString(8),
                         Key = reader.IsDBNull(9) ? null : reader.GetString(9),
                         AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
@@ -393,7 +393,7 @@ public static class StoryRoutes
                 insertCmd.Parameters.AddWithValue("@Description", (object?)request.Description?.Trim() ?? DBNull.Value);
                 insertCmd.Parameters.AddWithValue("@AcceptanceCriteria", (object?)request.AcceptanceCriteria?.Trim() ?? DBNull.Value);
                 insertCmd.Parameters.AddWithValue("@StoryPoints", (object?)request.StoryPoints ?? DBNull.Value);
-                insertCmd.Parameters.AddWithValue("@Priority", priorityValue);
+                insertCmd.Parameters.AddWithValue("@Priority", priorityText);
                 insertCmd.Parameters.AddWithValue("@AssigneeId", string.IsNullOrWhiteSpace(request.AssigneeId) ? DBNull.Value : Guid.Parse(request.AssigneeId));
                 insertCmd.Parameters.AddWithValue("@Status", status);
                 insertCmd.Parameters.AddWithValue("@Key", storyKey);
@@ -440,8 +440,13 @@ public static class StoryRoutes
                 ? (string.IsNullOrWhiteSpace(request.SprintId) ? "Backlog" : "SprintBacklog")
                 : request.Status;
 
-            // Priority as int for database (1=Low, 2=Medium, 3=High)
             var priorityValue = request.PriorityValue;
+            var priorityText = priorityValue switch
+            {
+                1 => "Low",
+                3 => "High",
+                _ => "Medium"
+            };
 
             var updateSql = @"
                 UPDATE UserStories 
@@ -457,7 +462,7 @@ public static class StoryRoutes
                 updateCmd.Parameters.AddWithValue("@Description", (object?)request.Description?.Trim() ?? DBNull.Value);
                 updateCmd.Parameters.AddWithValue("@AcceptanceCriteria", (object?)request.AcceptanceCriteria?.Trim() ?? DBNull.Value);
                 updateCmd.Parameters.AddWithValue("@StoryPoints", (object?)request.StoryPoints ?? DBNull.Value);
-                updateCmd.Parameters.AddWithValue("@Priority", priorityValue);
+                updateCmd.Parameters.AddWithValue("@Priority", priorityText);
                 updateCmd.Parameters.AddWithValue("@SprintId", string.IsNullOrWhiteSpace(request.SprintId) ? DBNull.Value : Guid.Parse(request.SprintId));
                 updateCmd.Parameters.AddWithValue("@AssigneeId", string.IsNullOrWhiteSpace(request.AssigneeId) ? DBNull.Value : Guid.Parse(request.AssigneeId));
                 updateCmd.Parameters.AddWithValue("@Status", status);
@@ -479,7 +484,7 @@ public static class StoryRoutes
                 using var reader = await selectCmd.ExecuteReaderAsync();
                 if (await reader.ReadAsync())
                 {
-                    var priorityText = ReadPriority(reader, 7);
+                    var selectedPriorityText = ReadPriority(reader, 7);
                     var storyDto = new UserStoryDto
                     {
                         Id = reader.GetString(0),
@@ -489,7 +494,7 @@ public static class StoryRoutes
                         Description = reader.IsDBNull(4) ? null : reader.GetString(4),
                         AcceptanceCriteria = reader.IsDBNull(5) ? null : reader.GetString(5),
                         StoryPoints = reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                        Priority = priorityText,
+                        Priority = selectedPriorityText,
                         Status = reader.GetString(8),
                         Key = reader.IsDBNull(9) ? null : reader.GetString(9),
                         AssigneeId = reader.IsDBNull(10) ? null : reader.GetString(10),
@@ -554,12 +559,13 @@ public static class StoryRoutes
             // Update story to move to sprint
             using (var updateCmd = new SqlCommand(@"
                 UPDATE UserStories 
-                SET SprintId = @SprintId, Status = @Status
+                SET SprintId = @SprintId, Status = @Status, UpdatedAt = @UpdatedAt
                 WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
                 updateCmd.Parameters.AddWithValue("@Id", id);
                 updateCmd.Parameters.AddWithValue("@SprintId", Guid.Parse(sprintId));
-                updateCmd.Parameters.AddWithValue("@Status", "Backlog");
+                updateCmd.Parameters.AddWithValue("@Status", "SprintBacklog");
+                updateCmd.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
                 await updateCmd.ExecuteNonQueryAsync();
             }
 
@@ -585,12 +591,13 @@ public static class StoryRoutes
             // Update story to move to backlog (remove sprint assignment)
             using (var updateCmd = new SqlCommand(@"
                 UPDATE UserStories 
-                SET SprintId = @SprintId, Status = @Status
+                SET SprintId = @SprintId, Status = @Status, UpdatedAt = @UpdatedAt
                 WHERE CAST(Id AS NVARCHAR(36)) = @Id", connection))
             {
                 updateCmd.Parameters.AddWithValue("@Id", id);
                 updateCmd.Parameters.AddWithValue("@SprintId", DBNull.Value);
                 updateCmd.Parameters.AddWithValue("@Status", "Backlog");
+                updateCmd.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow);
                 await updateCmd.ExecuteNonQueryAsync();
             }
 

@@ -110,7 +110,7 @@ public static class NotificationRoutes
             try
             {
                 // Obtener información de la notificación (invitación)
-                string notificationType = "", projectId = "", userId = "", invitedById = "", projectName = "";
+                string notificationType = "", projectId = "", userId = "", invitedById = "", projectName = "", invitationRole = "Developer";
                 using (var notifCmd = new SqlCommand(@"
                     SELECT Type, CAST(ProjectId AS NVARCHAR(36)) as ProjectId, CAST(UserId AS NVARCHAR(36)) as UserId, 
                            CAST(CreatorId AS NVARCHAR(36)) as CreatorId
@@ -145,6 +145,10 @@ public static class NotificationRoutes
 
                     // Buscar y actualizar la invitación correspondiente
                     using (var updateInvCmd = new SqlCommand(@"
+                        SELECT @Role = Role
+                        FROM ProjectInvitations
+                        WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId AND CAST(UserId AS NVARCHAR(36)) = @UserId AND Status = 'pending';
+
                         UPDATE ProjectInvitations 
                         SET Status = 'accepted', RespondedAt = @RespondedAt
                         WHERE CAST(ProjectId AS NVARCHAR(36)) = @ProjectId AND CAST(UserId AS NVARCHAR(36)) = @UserId AND Status = 'pending'", connection, transaction))
@@ -152,7 +156,10 @@ public static class NotificationRoutes
                         updateInvCmd.Parameters.AddWithValue("@ProjectId", projectId);
                         updateInvCmd.Parameters.AddWithValue("@UserId", userId);
                         updateInvCmd.Parameters.AddWithValue("@RespondedAt", DateTime.UtcNow);
+                        var roleParameter = updateInvCmd.Parameters.Add("@Role", System.Data.SqlDbType.NVarChar, 50);
+                        roleParameter.Direction = System.Data.ParameterDirection.Output;
                         await updateInvCmd.ExecuteNonQueryAsync();
+                        invitationRole = roleParameter.Value == DBNull.Value ? "Developer" : NormalizeProjectRole(roleParameter.Value?.ToString());
                     }
 
                     // Agregar como miembro
@@ -164,7 +171,7 @@ public static class NotificationRoutes
                         memberCmd.Parameters.AddWithValue("@Id", Guid.NewGuid());
                         memberCmd.Parameters.AddWithValue("@ProjectId", Guid.Parse(projectId));
                         memberCmd.Parameters.AddWithValue("@UserId", Guid.Parse(userId));
-                        memberCmd.Parameters.AddWithValue("@Role", "Developer");
+                        memberCmd.Parameters.AddWithValue("@Role", invitationRole);
                         memberCmd.Parameters.AddWithValue("@JoinedAt", DateTime.UtcNow);
                         await memberCmd.ExecuteNonQueryAsync();
                     }
@@ -288,6 +295,16 @@ public static class NotificationRoutes
             CreatedAt = notification.CreatedAt,
             ProjectName = project?.Name,
             CreatorName = creator?.Name
+        };
+    }
+
+    private static string NormalizeProjectRole(string? role)
+    {
+        return role?.Trim().ToLowerInvariant() switch
+        {
+            "product owner" or "productowner" => "Product Owner",
+            "scrum master" or "scrummaster" => "Scrum Master",
+            _ => "Developer"
         };
     }
 }

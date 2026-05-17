@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - Scrum System</title>
-    <link rel="stylesheet" href="css/styles.css?v=3864">
+    <link rel="stylesheet" href="css/styles.css?v=3865">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -447,10 +447,14 @@
             <div class="modal-body">
                 <p>¿Estás seguro de que deseas eliminar el proyecto <strong id="delete-project-name"></strong>?</p>
                 <p class="text-muted">Esta acción no se puede deshacer.</p>
+                <div class="delete-confirmation-field">
+                    <label for="delete-project-confirm-input">Escribe <strong>eliminar</strong> para confirmar</label>
+                    <input type="text" id="delete-project-confirm-input" class="form-control" autocomplete="off" placeholder="eliminar">
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="hideModal('delete-modal')">Cancelar</button>
-                <button type="button" class="btn btn-danger" id="confirm-delete-btn">Eliminar</button>
+                <button type="button" class="btn btn-danger" id="confirm-delete-btn" disabled>Eliminar</button>
             </div>
         </div>
     </div>
@@ -557,7 +561,7 @@
 
     <!-- Start Sprint Modal -->
     <div id="start-sprint-modal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content start-sprint-content">
             <div class="modal-header">
                 <h2>Iniciar sprint</h2>
                 <button class="modal-close" onclick="hideModal('start-sprint-modal')">
@@ -576,12 +580,14 @@
                     </div>
                     <div class="form-group">
                         <label for="sprint-duration">Duración *</label>
+                        <div class="start-sprint-select-wrap">
                         <select id="sprint-duration" name="sprint-duration" required onchange="calculateEndDate()">
                             <option value="">Seleccionar duración</option>
                             <option value="1">1 semana</option>
                             <option value="2">2 semanas</option>
                             <option value="4">4 semanas</option>
                         </select>
+                        </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
@@ -942,6 +948,75 @@
                         </button>
                     </div>
                 </aside>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Retrospective Modal -->
+    <div id="create-retrospective-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-header-left">
+                    <h2><i class="fas fa-comments"></i> Nueva Retrospectiva</h2>
+                    <p class="modal-subtitle">Crea una retrospectiva para tu sprint</p>
+                </div>
+                <button class="btn btn-icon" onclick="hideModal('create-retrospective-modal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="create-retrospective-form">
+                <div class="form-group">
+                    <label for="retrospective-sprint">Sprint *</label>
+                    <select id="retrospective-sprint" required>
+                        <option value="">Seleccionar sprint...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="retrospective-template">Plantilla</label>
+                    <select id="retrospective-template">
+                        <option value="StartStopContinue">Start/Stop/Continue</option>
+                        <option value="WellImprove">Well/Improve</option>
+                        <option value="4Ls">4Ls (Liked, Learned, Lacked, Longed for)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="retrospective-mood">Satisfacción del Equipo (1-10)</label>
+                    <input type="range" id="retrospective-mood" min="1" max="10" value="5" step="0.1">
+                    <div class="mood-display">
+                        <span id="mood-value">5</span>
+                        <span id="mood-emoji">😐</span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="retrospective-notes">Notas</label>
+                    <textarea id="retrospective-notes" rows="4" placeholder="Añade notas adicionales sobre el sprint..."></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('create-retrospective-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Crear Retrospectiva
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Retrospective Detail Modal -->
+    <div id="retrospective-detail-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-header-left">
+                    <h2><i class="fas fa-comments"></i> Detalles de Retrospectiva</h2>
+                    <p class="modal-subtitle">Revisa y gestiona la retrospectiva</p>
+                </div>
+                <button class="btn btn-icon" onclick="hideModal('retrospective-detail-modal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="retrospective-detail-content">
+                    <!-- Content will be loaded dynamically -->
+                </div>
             </div>
         </div>
     </div>

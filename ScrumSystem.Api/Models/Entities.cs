@@ -322,6 +322,12 @@ public class UpdateProjectRequest
 public class AddProjectMemberRequest
 {
     public string UserId { get; set; } = string.Empty;
+    public string Role { get; set; } = "Developer";
+}
+
+public class UpdateProjectMemberRequest
+{
+    public string Role { get; set; } = "Developer";
 }
 
 public class CreateSprintRequest
@@ -494,4 +500,90 @@ public class BurndownChartDto
 public class UpdateTaskDescriptionRequest
 {
     public string Description { get; set; } = string.Empty;
+}
+
+public class SprintRetrospectiveDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string SprintId { get; set; } = string.Empty;
+    public string? FacilitatorId { get; set; }
+    public DateTime Date { get; set; }
+    public decimal MoodRating { get; set; }
+    public string? Template { get; set; }
+    public string? Notes { get; set; }
+    public bool IsCompleted { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string? SprintName { get; set; }
+    public string? FacilitatorName { get; set; }
+    public List<RetrospectiveItemDto> Items { get; set; } = new();
+    public List<RetrospectiveActionItemDto> ActionItems { get; set; } = new();
+    public int ParticipantCount { get; set; }
+}
+
+public class RetrospectiveItemDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string RetrospectiveId { get; set; } = string.Empty;
+    public string Type { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public int Votes { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string UserId { get; set; } = string.Empty;
+    public string? UserName { get; set; }
+}
+
+public class RetrospectiveActionItemDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string RetrospectiveId { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string AssignedToId { get; set; } = string.Empty;
+    public DateTime DueDate { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public DateTime? CompletedAt { get; set; }
+    public string CreatedById { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public string? AssignedToName { get; set; }
+    public string? CreatedByName { get; set; }
+}
+
+public class CreateRetrospectiveRequest
+{
+    public string SprintId { get; set; } = string.Empty;
+    public string FacilitatorId { get; set; } = string.Empty;
+    public decimal MoodRating { get; set; }
+    public string? Template { get; set; }
+    public string? Notes { get; set; }
+}
+
+public class UpdateRetrospectiveRequest
+{
+    public decimal MoodRating { get; set; }
+    public string? Notes { get; set; }
+    public bool IsCompleted { get; set; }
+}
+
+public class CreateRetrospectiveItemRequest
+{
+    public string RetrospectiveId { get; set; } = string.Empty;
+    public string Type { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public string? UserId { get; set; }
+}
+
+public class CreateRetrospectiveActionItemRequest
+{
+    public string RetrospectiveId { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string AssignedToId { get; set; } = string.Empty;
+    public DateTime DueDate { get; set; }
+    public string CreatedById { get; set; } = string.Empty;
+}
+
+public class UpdateActionItemRequest
+{
+    public string Action { get; set; } = string.Empty;
+    public string AssignedToId { get; set; } = string.Empty;
+    public DateTime DueDate { get; set; }
+    public string Status { get; set; } = string.Empty;
 }

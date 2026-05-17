@@ -137,6 +137,7 @@ function setupEventListeners() {
     });
     document.getElementById('project-form')?.addEventListener('submit', handleCreateProject);
     document.getElementById('story-form')?.addEventListener('submit', handleCreateStory);
+    setupRetrospectiveFormListener();
 }
 
 // ==================== API ====================
@@ -610,48 +611,41 @@ async function loadProjectView() {
                 <button class="project-nav-tab ${projectSubTab === 'board' ? 'active' : ''}" onclick="switchProjectTab('board')">
                     Tablero
                 </button>
+                <button class="project-nav-tab ${projectSubTab === 'retrospectives' ? 'active' : ''}" onclick="switchProjectTab('retrospectives')">
+                    <i class="fas fa-comments"></i> Retrospectivas
+                </button>
                 <button class="project-nav-tab ${projectSubTab === 'team-members' ? 'active' : ''}" onclick="switchProjectTab('team-members')">
                     <i class="fas fa-users"></i> Miembros
                 </button>
             </div>
             
             <div class="project-controls">
-                <div class="project-search">
-                    <div class="search-input-wrapper">
-                        <i class="fas fa-search"></i>
-                        <input type="text" id="project-search-input" placeholder="Buscar tablero..." onkeyup="searchProjectStories(event)">
+                <div class="project-command-summary">
+                    <span class="project-command-eyebrow">Proyecto activo</span>
+                    <div class="project-command-title">
+                        <span class="project-key-chip">${escapeHtml(project.key || 'SCRUM')}</span>
+                        <span>${escapeHtml(project.name)}</span>
                     </div>
                 </div>
-                <div class="project-members" id="project-members-list">
-                    <!-- Member avatars loaded here -->
+                <div class="project-command-members">
+                    <div class="project-members" id="project-members-list">
+                        <!-- Member avatars loaded here -->
+                    </div>
+                    <span class="project-members-count" id="project-members-count">Cargando miembros...</span>
                 </div>
-                <div class="project-filter">
-                    <button class="btn btn-icon btn-secondary" onclick="toggleFilterMenu()" title="Filtros">
-                        <i class="fas fa-filter"></i>
+                <div class="project-command-actions">
+                    <button type="button" class="btn btn-secondary" onclick="openProjectStoryModal()">
+                        <i class="fas fa-plus"></i> Historia
                     </button>
-                    <div class="filter-menu" id="filter-menu" style="display: none;">
-                        <div class="filter-menu-item" onclick="applyFilter('main')">
-                            <i class="fas fa-home"></i> Principal
-                        </div>
-                        <div class="filter-menu-item" onclick="applyFilter('sprint')">
-                            <i class="fas fa-running"></i> Sprint
-                        </div>
-                        <div class="filter-menu-item" onclick="applyFilter('assignee')">
-                            <i class="fas fa-user"></i> Persona asignada
-                        </div>
-                        <div class="filter-menu-item" onclick="applyFilter('activity')">
-                            <i class="fas fa-tasks"></i> Tipo de actividad
-                        </div>
-                        <div class="filter-menu-item" onclick="applyFilter('labels')">
-                            <i class="fas fa-tag"></i> Etiquetas
-                        </div>
-                        <div class="filter-menu-item" onclick="applyFilter('status')">
-                            <i class="fas fa-flag"></i> Estado
-                        </div>
-                        <div class="filter-menu-item" onclick="applyFilter('priority')">
-                            <i class="fas fa-exclamation-circle"></i> Prioridad
-                        </div>
-                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="openAddMembersModal('${project.id}', ${JSON.stringify(project.name)})">
+                        <i class="fas fa-user-plus"></i> Invitar
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="switchProjectTab('board')">
+                        <i class="fas fa-columns"></i> Tablero
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="switchProjectTab('dashboard')">
+                        <i class="fas fa-chart-line"></i> Dashboard
+                    </button>
                 </div>
             </div>
             
@@ -680,25 +674,45 @@ function switchProjectTab(tab) {
     loadProjectContent();
 }
 
-function loadProjectContent() {
+function openProjectStoryModal() {
+    if (!selectedProjectId) {
+        showToast('Selecciona un proyecto primero', 'warning');
+        return;
+    }
+
+    const form = document.getElementById('story-form');
+    if (form) form.reset();
+
+    document.getElementById('story-id').value = '';
+    document.getElementById('story-edit-project-id').value = selectedProjectId;
+    document.getElementById('story-edit-sprint-id').value = '';
+    document.getElementById('story-edit-status').value = 'Backlog';
+    document.getElementById('story-edit-assignee-id').value = '';
+    showModal('story-modal');
+}
+
+async function loadProjectContent() {
     const content = document.getElementById('project-content');
     if (!content) return;
     
     // Load project members
-    loadProjectMembers();
+    await loadProjectMembers();
     
     if (projectSubTab === 'dashboard') {
         // Load dashboard view
-        loadProjectDashboard();
+        await loadProjectDashboard();
     } else if (projectSubTab === 'backlog') {
         // Load backlog view
-        loadBacklog();
+        await loadBacklog();
     } else if (projectSubTab === 'board') {
         // Load kanban board directly in project view
-        loadProjectBoard();
+        await loadProjectBoard();
+    } else if (projectSubTab === 'retrospectives') {
+        // Load retrospectives view
+        await loadProjectRetrospectives();
     } else if (projectSubTab === 'team-members') {
         // Load team members view for current project
-        loadProjectTeamMembers();
+        await loadProjectTeamMembers();
     }
 }
 
@@ -854,7 +868,7 @@ function renderProjectMembers(members) {
         const initials = getInitials(member.name);
         const userColor = getUserColor(member.id);
         const joinedDate = new Date(member.joinedAt).toLocaleDateString('es-ES');
-        const isOwner = member.role === 'Product Owner';
+        const isOwner = member.isCreator === true || member.role === 'Product Owner';
         
         return `
             <div class="team-member-card">
@@ -880,7 +894,7 @@ function renderProjectMembers(members) {
                 </div>
                 
                 <div class="member-actions">
-                    <button class="btn btn-secondary" onclick="editProjectMember('${member.id}')">
+                    <button class="btn btn-secondary" onclick="editProjectMember('${member.id}')" ${member.isCreator === true ? 'disabled title="El creador conserva el rol Product Owner"' : ''}>
                         <i class="fas fa-edit"></i> Editar
                     </button>
                     <button class="btn btn-danger" onclick="removeProjectMember('${member.id}')" ${isOwner ? 'disabled title="No puedes eliminar al Product Owner"' : ''}>
@@ -1009,12 +1023,14 @@ async function loadProjectDashboard() {
         const html = await response.text();
         content.innerHTML = html;
         
-        // Load dashboard stats
-        const stats = await apiRequest('/api/dashboard/stats');
+        // Load dashboard stats for the selected project
+        const stats = await apiRequest(`/api/dashboard/projects/${selectedProjectId}/stats`);
         const statProjects = document.getElementById('stat-projects');
         const statStories = document.getElementById('stat-stories');
         const statTasks = document.getElementById('stat-tasks');
-        if (statProjects) statProjects.textContent = stats.totalProjects || 0;
+        const statProjectsLabel = statProjects?.parentElement?.querySelector('.stat-label');
+        if (statProjectsLabel) statProjectsLabel.textContent = 'Sprints';
+        if (statProjects) statProjects.textContent = stats.totalSprints || 0;
         if (statStories) statStories.textContent = stats.totalStories || 0;
         if (statTasks) statTasks.textContent = stats.completedTasks || 0;
         
@@ -1022,13 +1038,11 @@ async function loadProjectDashboard() {
         const stories = await apiRequest(`/api/stories/project/${selectedProjectId}/backlog`);
         renderDashboardStories(stories);
         
-        // Calculate story points and completed
-        const totalPoints = stories.reduce((sum, s) => sum + (s.storyPoints || 0), 0);
-        const completed = stories.filter(s => s.status === 'Done').length;
+        // Project-scoped story points and completed stories
         const statPoints = document.getElementById('stat-points');
         const statDone = document.getElementById('stat-done');
-        if (statPoints) statPoints.textContent = totalPoints;
-        if (statDone) statDone.textContent = completed;
+        if (statPoints) statPoints.textContent = stats.totalStoryPoints || 0;
+        if (statDone) statDone.textContent = stats.completedStories || 0;
         
         loadBurndownSprints();
     } catch (error) {
@@ -1110,6 +1124,92 @@ async function loadProjectBoard() {
     }
 }
 
+async function loadProjectRetrospectives() {
+    const content = document.getElementById('project-content');
+    if (!content || !selectedProjectId) {
+        return;
+    }
+    
+    try {
+        // Get retrospectives
+        const retrospectives = await apiRequest(`/api/retrospectives/project/${selectedProjectId}`);
+        
+        let html = `
+            <div class="retrospectives-view">
+                <div class="retrospectives-header">
+                    <div>
+                        <h3><i class="fas fa-comments"></i> Retrospectivas del Proyecto</h3>
+                        <p class="section-subtitle">Gestiona las retrospectivas de tus sprints</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="showCreateRetrospectiveModal('${selectedProjectId}')">
+                        <i class="fas fa-plus"></i> Nueva Retrospectiva
+                    </button>
+                </div>
+                
+                <div class="retrospectives-list">
+        `;
+        
+        if (retrospectives && retrospectives.length > 0) {
+            html += retrospectives.map(r => `
+                <div class="retrospective-card">
+                    <div class="retrospective-header">
+                        <div>
+                            <h4>${escapeHtml(r.sprintName || 'Sprint')}</h4>
+                            <p class="retrospective-date">
+                                <i class="fas fa-calendar"></i> 
+                                ${new Date(r.date).toLocaleDateString()}
+                            </p>
+                        </div>
+                        <div class="retrospective-status">
+                            ${r.isCompleted ? '<span class="badge success"><i class="fas fa-check"></i> Completada</span>' : '<span class="badge warning"><i class="fas fa-hourglass-half"></i> Pendiente</span>'}
+                        </div>
+                    </div>
+                    <div class="retrospective-info">
+                        <div class="info-item">
+                            <span class="label">Facilitador:</span>
+                            <span>${escapeHtml(r.facilitatorName || 'N/A')}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">Plantilla:</span>
+                            <span>${escapeHtml(r.template || 'N/A')}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">Participantes:</span>
+                            <span>${r.participantCount || 0}</span>
+                        </div>
+                    </div>
+                    <div class="retrospective-actions">
+                        <button class="btn btn-icon btn-small" onclick="viewRetrospective('${r.id}')" title="Ver detalles">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn btn-icon btn-small" onclick="editRetrospective('${r.id}')" title="Editar">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-icon btn-small text-danger" onclick="deleteRetrospective('${r.id}')" title="Eliminar">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            html += `
+                <div class="empty-state">
+                    <i class="fas fa-comments"></i>
+                    <p>No hay retrospectivas registradas</p>
+                    <p class="small">Crea una retrospectiva para comenzar a documentar las lecciones aprendidas</p>
+                </div>
+            `;
+        }
+        
+        html += `</div></div>`;
+        
+        content.innerHTML = html;
+    } catch (error) {
+        console.error('Error loading retrospectives:', error);
+        content.innerHTML = '<p class="empty-state"><i class="fas fa-exclamation-triangle"></i> Error al cargar retrospectivas</p>';
+    }
+}
+
 async function loadProjectMembers() {
     console.log('loadProjectMembers called, selectedProjectId:', selectedProjectId);
     
@@ -1158,6 +1258,12 @@ async function loadProjectMembers() {
     
     console.log('Setting avatars HTML:', avatarsHtml);
     membersContainer.innerHTML = avatarsHtml;
+
+    const countContainer = document.getElementById('project-members-count');
+    if (countContainer) {
+        const count = project.members.length;
+        countContainer.textContent = `${count} ${count === 1 ? 'miembro' : 'miembros'}`;
+    }
 }
 
 // Temporary members list for new project
@@ -1257,7 +1363,26 @@ function removeMemberToAdd(index) {
 async function deleteProject(id, name) {
     projectToDelete = { id, name };
     document.getElementById('delete-project-name').textContent = name;
+    resetDeleteProjectConfirmation();
     showModal('delete-modal');
+}
+
+function isDeleteProjectConfirmed() {
+    const confirmationInput = document.getElementById('delete-project-confirm-input');
+    return confirmationInput?.value.trim().toLowerCase() === 'eliminar';
+}
+
+function resetDeleteProjectConfirmation() {
+    const confirmationInput = document.getElementById('delete-project-confirm-input');
+    const confirmBtn = document.getElementById('confirm-delete-btn');
+
+    if (confirmationInput) {
+        confirmationInput.value = '';
+    }
+
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+    }
 }
 
 // Leave project function
@@ -1526,15 +1651,29 @@ function getTimeAgo(dateString) {
 // Confirm delete button handler
 document.addEventListener('DOMContentLoaded', () => {
     const confirmBtn = document.getElementById('confirm-delete-btn');
+    const deleteConfirmationInput = document.getElementById('delete-project-confirm-input');
+
+    if (deleteConfirmationInput && confirmBtn) {
+        deleteConfirmationInput.addEventListener('input', () => {
+            confirmBtn.disabled = !isDeleteProjectConfirmed();
+        });
+    }
+
     if (confirmBtn) {
         confirmBtn.addEventListener('click', () => {
             if (!projectToDelete) return;
+
+            if (!isDeleteProjectConfirmed()) {
+                showToast('Escribe "eliminar" para confirmar el borrado del proyecto', 'error');
+                return;
+            }
             
             apiRequest(`/api/projects/${projectToDelete.id}?userId=${currentUser.id}`, { method: 'DELETE' })
                 .then(() => {
                     showToast(`Proyecto "${projectToDelete.name}" eliminado`);
                     hideModal('delete-modal');
                     projectToDelete = null;
+                    resetDeleteProjectConfirmation();
                     loadProjects();
                 })
                 .catch(err => showToast('Error: ' + err.message, 'error'));
@@ -1656,7 +1795,7 @@ function renderProjectBacklog(sprints, stories, members) {
             const sprintStoryCount = sprintStories.length;
             
             // Calcular puntos por estado
-            const sprintTodo = sprintStories.filter(s => s.status === 'Backlog').length;
+            const sprintTodo = sprintStories.filter(s => s.status === 'Backlog' || s.status === 'SprintBacklog').length;
             const sprintInProgress = sprintStories.filter(s => s.status === 'InProgress').length;
             const sprintDone = sprintStories.filter(s => s.status === 'Done').length;
             
@@ -1993,12 +2132,12 @@ function createBacklogStoryCard(story, members, projectKey) {
         'Backlog': 'TAREAS POR HACER',
         'InProgress': 'EN PROGRESO',
         'Done': 'COMPLETADO',
-        'SprintBacklog': 'SPRINT BACKLOG'
+        'SprintBacklog': 'TAREAS POR HACER'
     };
     const statusLabel = statusLabels[story.status] || 'TAREAS POR HACER';
     
     return `
-        <div class="backlog-story-card" data-story-id="${story.id}" draggable="true" ondragstart="dragBacklogStory(event, '${story.id}')">
+        <div class="backlog-story-card" data-story-id="${story.id}" data-assignee-id="${story.assigneeId || ''}" draggable="true" ondragstart="dragBacklogStory(event, '${story.id}')">
             <div class="story-left">
                 <label class="story-checkbox-label">
                     <input type="checkbox" class="story-checkbox" id="story-${story.id}">
@@ -2043,10 +2182,10 @@ function createBacklogStoryCard(story, members, projectKey) {
                 </div>
                 <div class="story-points-inline">${story.storyPoints || '-'}</div>
                 ${assignee ? `
-                    <div class="assignee-avatar" style="background: ${assigneeColor}; color: white;" title="${assignee.name} (${assignee.role})">
+                    <div class="assignee-avatar" style="background: ${assigneeColor}; color: white;" onclick="showAssigneeDropdown(event, '${story.id}')" title="${escapeHtml(assignee.name)} (${escapeHtml(assignee.role)}) - Click para reasignar">
                         ${assigneeInitials}
                     </div>
-                ` : '<div class="assignee-avatar unassigned" title="Sin asignar">?</div>'}
+                ` : `<div class="assignee-avatar unassigned" onclick="showAssigneeDropdown(event, '${story.id}')" title="Sin asignar - Click para asignar">?</div>`}
                 <div class="story-actions-dropdown-container">
                     <button class="story-actions-btn" onclick="toggleStoryActionsMenu(event, '${story.id}')">
                         <i class="fas fa-ellipsis-h"></i>
@@ -2062,6 +2201,37 @@ function createBacklogStoryCard(story, members, projectKey) {
         </div>
     `;
 }
+
+function getSelectedBacklogStoryIds(scope = document) {
+    return Array.from(scope.querySelectorAll('.backlog-story-card .story-checkbox:checked'))
+        .map(checkbox => checkbox.closest('.backlog-story-card')?.dataset.storyId)
+        .filter(Boolean);
+}
+
+function syncSelectedStoriesForSprint() {
+    const backlogSection = document.querySelector('.backlog-section');
+    window.selectedStoriesForSprint = getSelectedBacklogStoryIds(backlogSection || document);
+}
+
+document.addEventListener('change', function(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+
+    if (target.classList.contains('story-checkbox')) {
+        syncSelectedStoriesForSprint();
+        return;
+    }
+
+    if (target.classList.contains('backlog-checkbox')) {
+        const section = target.closest('.sprint-section, .backlog-section');
+        if (!section) return;
+
+        section.querySelectorAll('.backlog-story-card .story-checkbox').forEach(checkbox => {
+            checkbox.checked = target.checked;
+        });
+        syncSelectedStoriesForSprint();
+    }
+});
 
 function dragBacklogStory(event, storyId) {
     event.dataTransfer.setData('storyId', storyId);
@@ -2124,27 +2294,36 @@ function toggleStoryStatusMenu(event, storyId) {
     event.stopPropagation();
     const menu = document.getElementById(`story-status-menu-${storyId}`);
     const allMenus = document.querySelectorAll('.story-status-menu');
+    const card = menu?.closest('.backlog-story-card');
     
     // Close all other menus
     allMenus.forEach(m => {
-        if (m !== menu) m.style.display = 'none';
+        if (m !== menu) {
+            m.style.display = 'none';
+            m.closest('.backlog-story-card')?.classList.remove('status-menu-open');
+        }
     });
     
     // Toggle current menu
-    menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+    const shouldOpen = menu.style.display !== 'block';
+    menu.style.display = shouldOpen ? 'block' : 'none';
+    card?.classList.toggle('status-menu-open', shouldOpen);
 }
 
 async function changeStoryStatus(storyId, newStatus) {
     // Close the menu
     const menu = document.getElementById(`story-status-menu-${storyId}`);
-    if (menu) menu.style.display = 'none';
+    if (menu) {
+        menu.style.display = 'none';
+        menu.closest('.backlog-story-card')?.classList.remove('status-menu-open');
+    }
     
     // Update the story status in the UI
     const statusLabels = {
         'Backlog': 'TAREAS POR HACER',
         'InProgress': 'EN CURSO',
         'Done': 'FINALIZADA',
-        'SprintBacklog': 'SPRINT BACKLOG'
+        'SprintBacklog': 'TAREAS POR HACER'
     };
     
     try {
@@ -2166,6 +2345,7 @@ document.addEventListener('click', function(event) {
     if (!event.target.closest('.story-status-dropdown-container')) {
         document.querySelectorAll('.story-status-menu').forEach(menu => {
             menu.style.display = 'none';
+            menu.closest('.backlog-story-card')?.classList.remove('status-menu-open');
         });
     }
     if (!event.target.closest('.story-actions-dropdown-container')) {
@@ -2394,6 +2574,8 @@ async function createBacklogStory() {
 }
 
 async function createSprintFromBacklog() {
+    const selectedStoryIds = getSelectedBacklogStoryIds(document.querySelector('.backlog-section') || document);
+
     // Generar nombre y fechas por defecto
     let sprintName;
     let sprintNumber;
@@ -2432,10 +2614,28 @@ async function createSprintFromBacklog() {
         });
 
         // 2. Crear sección HTML dinámica del sprint (igual al Sprint 1, vacío)
-        const sprintElement = createDynamicSprintSection(sprint, 0);
+        let movedStoryCount = 0;
+        for (const storyId of selectedStoryIds) {
+            try {
+                await apiRequest(`/api/stories/${storyId}/move-to-sprint?sprintId=${encodeURIComponent(sprint.id)}`, {
+                    method: 'POST'
+                });
+                movedStoryCount++;
+            } catch (moveError) {
+                console.error(`Error moviendo historia ${storyId}:`, moveError);
+            }
+        }
+
+        const sprintElement = createDynamicSprintSection(sprint, movedStoryCount);
         
         if (sprintElement) {
-            showToast(`${sprintName} creado exitosamente`, 'success');
+            window.selectedStoriesForSprint = [];
+            showToast(
+                movedStoryCount > 0
+                    ? `${sprintName} creado con ${movedStoryCount} historia(s)`
+                    : `${sprintName} creado exitosamente`,
+                'success'
+            );
             await loadBacklog();
         } else {
             showToast(`${sprintName} creado pero no se pudo mostrar`, 'warning');
@@ -2810,6 +3010,10 @@ function deleteSprint(sprintId) {
 // Variable global para almacenar el ID del sprint que se está iniciando
 let currentSprintToStart = null;
 
+function getStartSprintFormField(fieldId) {
+    return document.querySelector(`#start-sprint-form #${fieldId}`);
+}
+
 function showStartSprintModal(activitiesCount, sprintName = '', sprintId = null) {
     console.log('showStartSprintModal called with:', { activitiesCount, sprintName, sprintId });
     
@@ -2821,6 +3025,11 @@ function showStartSprintModal(activitiesCount, sprintName = '', sprintId = null)
     const submitBtn = document.getElementById('start-sprint-submit-btn');
     
     if (modal && countElement) {
+        const form = document.getElementById('start-sprint-form');
+        if (form) {
+            form.reset();
+        }
+
         countElement.textContent = `${activitiesCount} actividades se incluirán en este sprint.`;
         modal.classList.add('active');
         
@@ -2830,39 +3039,24 @@ function showStartSprintModal(activitiesCount, sprintName = '', sprintId = null)
         }
         
         // Set default start date to today
-        const startDateInput = document.getElementById('sprint-start-date');
+        const startDateInput = getStartSprintFormField('sprint-start-date');
         if (startDateInput) {
             const today = new Date().toISOString().split('T')[0];
             startDateInput.value = today;
         }
-        
-        // Reset form only if no sprint name provided
-        if (!sprintName) {
-            document.getElementById('start-sprint-form').reset();
+
+        const durationInput = getStartSprintFormField('sprint-duration');
+        if (durationInput) {
+            durationInput.value = '2';
         }
         
-        // Set sprint name if provided (do this last to avoid being overwritten)
-        if (sprintName) {
-            console.log('Setting sprint name to:', sprintName);
-            
-            // Delay to ensure modal is fully rendered
-            setTimeout(() => {
-                const sprintNameInput = document.getElementById('sprint-name');
-                if (sprintNameInput) {
-                    console.log('Found sprint name input, current value:', sprintNameInput.value);
-                    
-                    // Set value
-                    sprintNameInput.value = sprintName;
-                    
-                    // Force white color with !important via style attribute
-                    sprintNameInput.setAttribute('style', 'color: #ffffff !important; background-color: transparent;');
-                    
-                    console.log('After setting - value:', sprintNameInput.value, 'style:', sprintNameInput.getAttribute('style'));
-                } else {
-                    console.log('Sprint name input not found!');
-                }
-            }, 200);
+        // Set sprint name if provided
+        const sprintNameInput = getStartSprintFormField('sprint-name');
+        if (sprintName && sprintNameInput) {
+            sprintNameInput.value = sprintName;
         }
+
+        calculateEndDate();
     }
 }
 
@@ -2979,9 +3173,9 @@ async function confirmCompleteSprint() {
 }
 
 function calculateEndDate() {
-    const duration = document.getElementById('sprint-duration').value;
-    const startDate = document.getElementById('sprint-start-date').value;
-    const endDateInput = document.getElementById('sprint-end-date');
+    const duration = getStartSprintFormField('sprint-duration')?.value || '';
+    const startDate = getStartSprintFormField('sprint-start-date')?.value || '';
+    const endDateInput = getStartSprintFormField('sprint-end-date');
     
     if (duration && startDate && endDateInput) {
         const start = new Date(startDate);
@@ -2994,11 +3188,11 @@ function calculateEndDate() {
 }
 
 async function submitStartSprint() {
-    const name = document.getElementById('sprint-name').value.trim();
-    const duration = document.getElementById('sprint-duration').value;
-    const startDate = document.getElementById('sprint-start-date').value;
-    const endDate = document.getElementById('sprint-end-date').value;
-    const goal = document.getElementById('sprint-goal').value.trim();
+    const name = getStartSprintFormField('sprint-name')?.value.trim() || '';
+    const duration = getStartSprintFormField('sprint-duration')?.value || '';
+    const startDate = getStartSprintFormField('sprint-start-date')?.value || '';
+    const endDate = getStartSprintFormField('sprint-end-date')?.value || '';
+    const goal = getStartSprintFormField('sprint-goal')?.value.trim() || '';
     
     if (!name || !duration || !startDate || !endDate) {
         showToast('Por favor completa todos los campos obligatorios', 'error');
@@ -3927,6 +4121,7 @@ async function assignStoryToMember(storyId, memberId) {
                 projectId: story.projectId,
                 title: story.title,
                 description: story.description,
+                acceptanceCriteria: story.acceptanceCriteria || '',
                 priority: story.priority,
                 storyPoints: story.storyPoints,
                 assigneeId: memberId,
@@ -3958,6 +4153,27 @@ async function assignStoryToMember(storyId, memberId) {
                     assigneeAvatar.textContent = '?';
                     assigneeAvatar.title = 'Sin asignar - Click para asignar';
                     assigneeAvatar.dataset.assigneeId = '';
+                }
+            }
+        }
+
+        const backlogCard = document.querySelector(`.backlog-story-card[data-story-id="${storyId}"]`);
+        if (backlogCard) {
+            backlogCard.dataset.assigneeId = memberId || '';
+            const backlogAvatar = backlogCard.querySelector('.assignee-avatar');
+            if (backlogAvatar) {
+                backlogAvatar.onclick = (event) => showAssigneeDropdown(event, storyId);
+                if (member) {
+                    backlogAvatar.className = 'assignee-avatar';
+                    backlogAvatar.style.background = assigneeColor;
+                    backlogAvatar.style.color = 'white';
+                    backlogAvatar.textContent = assigneeInitials;
+                    backlogAvatar.title = `${member.name} (${member.role}) - Click para reasignar`;
+                } else {
+                    backlogAvatar.className = 'assignee-avatar unassigned';
+                    backlogAvatar.removeAttribute('style');
+                    backlogAvatar.textContent = '?';
+                    backlogAvatar.title = 'Sin asignar - Click para asignar';
                 }
             }
         }
@@ -4835,7 +5051,292 @@ document.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') {
         closeAllIssueSubtaskAssigneePickers();
     }
+
+    if (event.key === 'Enter' && event.target.id === 'issue-new-subtask-title') {
+        event.preventDefault();
+        createIssueSubtask();
+    }
 });
+
+let currentEditingRetrospective = null;
+
+function setupRetrospectiveFormListener() {
+    const form = document.getElementById('create-retrospective-form');
+    if (!form || form.dataset.listenerAttached === 'true') return;
+
+    form.addEventListener('submit', handleSaveRetrospective);
+    form.dataset.listenerAttached = 'true';
+
+    const moodInput = document.getElementById('retrospective-mood');
+    if (moodInput && moodInput.dataset.listenerAttached !== 'true') {
+        moodInput.addEventListener('input', updateRetrospectiveMoodDisplay);
+        moodInput.dataset.listenerAttached = 'true';
+    }
+}
+
+function setRetrospectiveModalMode(mode) {
+    const modal = document.getElementById('create-retrospective-modal');
+    const title = modal?.querySelector('.modal-header h2');
+    const subtitle = modal?.querySelector('.modal-subtitle');
+    const submitButton = modal?.querySelector('button[type="submit"]');
+    const sprintSelect = document.getElementById('retrospective-sprint');
+    const templateSelect = document.getElementById('retrospective-template');
+    const isEdit = mode === 'edit';
+
+    if (title) title.innerHTML = `<i class="fas fa-comments"></i> ${isEdit ? 'Editar Retrospectiva' : 'Nueva Retrospectiva'}`;
+    if (subtitle) subtitle.textContent = isEdit ? 'Actualiza la satisfaccion y notas del sprint' : 'Crea una retrospectiva para tu sprint';
+    if (submitButton) submitButton.innerHTML = `<i class="fas fa-save"></i> ${isEdit ? 'Guardar Cambios' : 'Crear Retrospectiva'}`;
+    if (submitButton) submitButton.disabled = false;
+    if (sprintSelect) sprintSelect.disabled = isEdit;
+    if (templateSelect) templateSelect.disabled = isEdit;
+}
+
+function updateRetrospectiveMoodDisplay() {
+    const moodInput = document.getElementById('retrospective-mood');
+    const moodValue = document.getElementById('mood-value');
+    const moodEmoji = document.getElementById('mood-emoji');
+    if (!moodInput || !moodValue || !moodEmoji) return;
+
+    const value = Number(moodInput.value);
+    moodValue.textContent = value.toFixed(value % 1 === 0 ? 0 : 1);
+    moodEmoji.textContent = getMoodEmoji(value);
+}
+
+async function showCreateRetrospectiveModal(projectId) {
+    try {
+        setupRetrospectiveFormListener();
+        currentEditingRetrospective = null;
+        setRetrospectiveModalMode('create');
+
+        const sprints = await apiRequest(`/api/sprints/project/${projectId}`);
+        const sprintSelect = document.getElementById('retrospective-sprint');
+        const submitButton = document.querySelector('#create-retrospective-form button[type="submit"]');
+        sprintSelect.innerHTML = '<option value="">Seleccionar sprint...</option>' +
+            sprints.map(sprint => `<option value="${sprint.id}">${escapeHtml(sprint.name)}</option>`).join('');
+
+        document.getElementById('retrospective-template').value = 'StartStopContinue';
+        document.getElementById('retrospective-mood').value = 5;
+        document.getElementById('retrospective-notes').value = '';
+        updateRetrospectiveMoodDisplay();
+
+        window.currentRetrospectiveProjectId = projectId;
+        if (!sprints.length) {
+            sprintSelect.innerHTML = '<option value="">No hay sprints disponibles</option>';
+            if (submitButton) submitButton.disabled = true;
+            showToast('Crea un sprint antes de registrar una retrospectiva', 'warning');
+        }
+        showModal('create-retrospective-modal');
+    } catch (error) {
+        console.error('Error loading sprints for retrospective:', error);
+        showToast('Error al cargar sprints', 'error');
+    }
+}
+
+async function handleSaveRetrospective(event) {
+    event.preventDefault();
+
+    const sprintId = document.getElementById('retrospective-sprint')?.value;
+    const template = document.getElementById('retrospective-template')?.value || 'StartStopContinue';
+    const moodRating = Number(document.getElementById('retrospective-mood')?.value || 5);
+    const notes = document.getElementById('retrospective-notes')?.value?.trim() || null;
+    const submitButton = event.target.querySelector('button[type="submit"]');
+    const originalButtonHtml = submitButton?.innerHTML;
+
+    if (!currentEditingRetrospective && !sprintId) {
+        showToast('Selecciona un sprint', 'error');
+        return;
+    }
+
+    if (!currentUser?.id) {
+        showToast('No se encontro el usuario actual', 'error');
+        return;
+    }
+
+    try {
+        if (submitButton) {
+            submitButton.disabled = true;
+            submitButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Guardando...';
+        }
+
+        if (currentEditingRetrospective) {
+            await apiRequest(`/api/retrospectives/${currentEditingRetrospective.id}`, {
+                method: 'PUT',
+                body: {
+                    moodRating,
+                    notes,
+                    isCompleted: Boolean(currentEditingRetrospective.isCompleted)
+                }
+            });
+            showToast('Retrospectiva actualizada', 'success');
+        } else {
+            await apiRequest('/api/retrospectives/', {
+                method: 'POST',
+                body: {
+                    sprintId,
+                    facilitatorId: currentUser.id,
+                    moodRating,
+                    template,
+                    notes
+                }
+            });
+            showToast('Retrospectiva creada', 'success');
+        }
+
+        hideModal('create-retrospective-modal');
+        currentEditingRetrospective = null;
+        await loadProjectRetrospectives();
+    } catch (error) {
+        console.error('Error saving retrospective:', error);
+        showToast('Error al guardar retrospectiva: ' + error.message, 'error');
+    } finally {
+        if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.innerHTML = originalButtonHtml;
+        }
+    }
+}
+
+async function viewRetrospective(retrospectiveId) {
+    try {
+        const retrospective = await apiRequest(`/api/retrospectives/${retrospectiveId}`);
+        if (!retrospective) {
+            showToast('Retrospectiva no encontrada', 'error');
+            return;
+        }
+
+        const itemsHtml = retrospective.items && retrospective.items.length
+            ? retrospective.items.map(item => `
+                <div class="retrospective-item">
+                    <div class="item-type">${escapeHtml(item.type)}</div>
+                    <div class="item-content">${escapeHtml(item.content)}</div>
+                    <div class="item-meta">
+                        <span class="author-badge">${escapeHtml(item.userName || 'N/A')}</span>
+                        <span class="votes-badge"><i class="fas fa-thumbs-up"></i> ${item.votes || 0}</span>
+                    </div>
+                </div>
+            `).join('')
+            : '<p>No hay items registrados</p>';
+
+        const actionItemsHtml = retrospective.actionItems && retrospective.actionItems.length
+            ? retrospective.actionItems.map(action => `
+                <div class="action-item ${escapeHtml(action.status || 'Pending')}">
+                    <div class="action-content">${escapeHtml(action.action)}</div>
+                    <div class="action-meta">
+                        <span class="assignee">${escapeHtml(action.assignedToName || 'Sin asignar')}</span>
+                        <span class="due-date">${action.dueDate ? new Date(action.dueDate).toLocaleDateString() : 'Sin fecha'}</span>
+                        <span class="status-badge">${escapeHtml(action.status || 'Pending')}</span>
+                    </div>
+                </div>
+            `).join('')
+            : '<p>No hay acciones de mejora</p>';
+
+        const detailContent = `
+            <div class="retrospective-detail-content">
+                <div class="retrospective-info-grid">
+                    <div class="info-item">
+                        <label>Sprint:</label>
+                        <span>${escapeHtml(retrospective.sprintName || 'N/A')}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>Fecha:</label>
+                        <span>${new Date(retrospective.date).toLocaleDateString()}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>Facilitador:</label>
+                        <span>${escapeHtml(retrospective.facilitatorName || 'N/A')}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>Plantilla:</label>
+                        <span>${escapeHtml(retrospective.template || 'N/A')}</span>
+                    </div>
+                    <div class="info-item">
+                        <label>Satisfaccion:</label>
+                        <div class="mood-display">
+                            <span>${retrospective.moodRating}/10</span>
+                            <span class="mood-emoji">${getMoodEmoji(retrospective.moodRating)}</span>
+                        </div>
+                    </div>
+                </div>
+                ${retrospective.notes ? `
+                    <div class="retrospective-notes-section">
+                        <label>Notas:</label>
+                        <p>${escapeHtml(retrospective.notes)}</p>
+                    </div>
+                ` : ''}
+                <div class="retrospective-items-section">
+                    <h4>Items de Retrospectiva</h4>
+                    <div class="retrospective-items-grid">
+                        ${itemsHtml}
+                    </div>
+                </div>
+                <div class="retrospective-actions-section">
+                    <h4>Acciones de Mejora</h4>
+                    <div class="retrospective-actions-grid">
+                        ${actionItemsHtml}
+                    </div>
+                </div>
+                <div class="retrospective-detail-actions">
+                    <button class="btn btn-secondary" onclick="hideModal('retrospective-detail-modal')">Cerrar</button>
+                    <button class="btn btn-primary" onclick="editRetrospective('${retrospectiveId}')">Editar</button>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('retrospective-detail-content').innerHTML = detailContent;
+        showModal('retrospective-detail-modal');
+    } catch (error) {
+        console.error('Error loading retrospective details:', error);
+        showToast('Error al cargar detalles de retrospectiva', 'error');
+    }
+}
+
+async function editRetrospective(retrospectiveId) {
+    try {
+        setupRetrospectiveFormListener();
+        const retrospective = await apiRequest(`/api/retrospectives/${retrospectiveId}`);
+        currentEditingRetrospective = retrospective;
+        setRetrospectiveModalMode('edit');
+
+        const sprintSelect = document.getElementById('retrospective-sprint');
+        sprintSelect.innerHTML = `<option value="${retrospective.sprintId}">${escapeHtml(retrospective.sprintName || 'Sprint')}</option>`;
+        sprintSelect.value = retrospective.sprintId;
+        sprintSelect.disabled = true;
+
+        document.getElementById('retrospective-template').value = retrospective.template || 'StartStopContinue';
+        document.getElementById('retrospective-mood').value = retrospective.moodRating || 5;
+        document.getElementById('retrospective-notes').value = retrospective.notes || '';
+        updateRetrospectiveMoodDisplay();
+
+        hideModal('retrospective-detail-modal');
+        showModal('create-retrospective-modal');
+    } catch (error) {
+        console.error('Error loading retrospective for edit:', error);
+        showToast('Error al cargar retrospectiva', 'error');
+    }
+}
+
+function deleteRetrospective(retrospectiveId) {
+    if (confirm('Estas seguro de que quieres eliminar esta retrospectiva? Esta accion no se puede deshacer.')) {
+        apiRequest(`/api/retrospectives/${retrospectiveId}`, {
+            method: 'DELETE'
+        })
+        .then(() => {
+            showToast('Retrospectiva eliminada exitosamente', 'success');
+            loadProjectRetrospectives();
+        })
+        .catch(error => {
+            console.error('Error deleting retrospective:', error);
+            showToast('Error al eliminar retrospectiva', 'error');
+        });
+    }
+}
+
+function getMoodEmoji(rating) {
+    if (rating <= 3) return 'Bajo';
+    if (rating <= 5) return 'Medio';
+    if (rating <= 7) return 'Bueno';
+    return 'Alto';
+}
 
 function allowDrop(ev) {
     ev.preventDefault();
@@ -4904,6 +5405,10 @@ function showModal(id) {
 function hideModal(id) {
     const modal = document.getElementById(id);
     if (modal) modal.classList.remove('active');
+
+    if (id === 'delete-modal') {
+        resetDeleteProjectConfirmation();
+    }
 }
 
 function showToast(message, type = 'success') {
@@ -5065,6 +5570,7 @@ function closeSubtaskDetail() {
             subtask.status = currentSubtaskDetail.status;
             subtask.assignedToId = currentSubtaskDetail.assignedToId;
             subtask.assignedToName = currentSubtaskDetail.assignedToName;
+            subtask.description = currentSubtaskDetail.description;
         }
     }
     
@@ -5642,21 +6148,19 @@ function insertImageFromFile(dataUrl, alt, size, align, border) {
         editor.innerHTML = '';
     }
     
-    // Build style based on options
-    let style = 'max-width: 100%; border-radius: 4px; display: inline-block; visibility: visible !important; opacity: 1 !important;';
-    
+    let targetWidth = '100%';
     switch (size) {
         case 'small':
-            style += ' width: 200px; height: auto;';
+            targetWidth = '200px';
             break;
         case 'medium':
-            style += ' width: 400px; height: auto;';
+            targetWidth = '400px';
             break;
         case 'large':
-            style += ' width: 600px; height: auto;';
+            targetWidth = '600px';
             break;
         case 'original':
-            style += ' width: auto; height: auto;';
+            targetWidth = '100%';
             break;
     }
     const imageId = 'img-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
@@ -5667,6 +6171,7 @@ function insertImageFromFile(dataUrl, alt, size, align, border) {
     img.alt = alt;
     img.style.maxWidth = '100%';
     img.style.height = 'auto';
+    img.style.display = 'block';
     img.style.borderRadius = '8px';
     img.style.cursor = 'pointer';
     img.setAttribute('data-image-id', imageId);
@@ -5675,7 +6180,9 @@ function insertImageFromFile(dataUrl, alt, size, align, border) {
     const wrapper = document.createElement('div');
     wrapper.style.margin = '8px 0';
     wrapper.style.position = 'relative';
-    wrapper.style.display = 'inline-block';
+    wrapper.style.display = 'block';
+    wrapper.style.width = targetWidth;
+    wrapper.style.maxWidth = '100%';
     wrapper.style.border = '1px solid rgba(139, 92, 246, 0.1)';
     wrapper.style.borderRadius = '8px';
     wrapper.style.padding = '4px';
@@ -6556,6 +7063,10 @@ async function saveSubtaskDescription() {
     }
     
     let description = editor.innerHTML;
+    const placeholderText = editor.querySelector('.placeholder-text')?.textContent?.trim();
+    if (placeholderText && editor.textContent.trim() === placeholderText) {
+        description = '';
+    }
     
     // Clean and validate the content
     description = cleanDescriptionContent(description);
@@ -6592,6 +7103,13 @@ async function saveSubtaskDescription() {
         });
         
         currentSubtaskDetail.description = description;
+        taskCache.set(currentSubtaskDetail.id, { ...currentSubtaskDetail });
+        if (currentIssueDetail?.tasks) {
+            const cachedSubtask = currentIssueDetail.tasks.find(task => task.id === currentSubtaskDetail.id);
+            if (cachedSubtask) {
+                cachedSubtask.description = description;
+            }
+        }
         showToast('Descripción guardada', 'success');
     } catch (error) {
         console.error('Error saving description:', error);

@@ -94,15 +94,20 @@ public class DatabaseContext
             Email NVARCHAR(100) UNIQUE NOT NULL,
             PasswordHash NVARCHAR(200) NOT NULL,
             Role NVARCHAR(20) NOT NULL CHECK (Role IN ('ProductOwner', 'ScrumMaster', 'Developer')),
+            AvatarColor NVARCHAR(7),
             CreatedAt DATETIME2 DEFAULT GETDATE()
         )",
+
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'Users') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'AvatarColor' AND object_id = OBJECT_ID('Users'))
+        ALTER TABLE Users ADD AvatarColor NVARCHAR(7)",
 
         @"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Projects')
         CREATE TABLE Projects (
             Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
             Name NVARCHAR(100) NOT NULL,
             Description NVARCHAR(500),
-            Key NVARCHAR(10),
+            [Key] NVARCHAR(10),
             Color NVARCHAR(7),
             Icon NVARCHAR(50),
             CreatorId UNIQUEIDENTIFIER REFERENCES Users(Id),
@@ -135,14 +140,33 @@ public class DatabaseContext
         @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'ProjectMembers') 
           AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'Role' AND object_id = OBJECT_ID('ProjectMembers'))
         ALTER TABLE ProjectMembers ADD Role NVARCHAR(50) DEFAULT 'Developer'",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'ProjectMembers')
+          AND EXISTS (SELECT * FROM sys.tables WHERE name = 'Projects')
+        UPDATE pm
+        SET Role = 'Product Owner'
+        FROM ProjectMembers pm
+        INNER JOIN Projects p ON pm.ProjectId = p.Id
+        WHERE pm.UserId = p.CreatorId AND ISNULL(pm.Role, '') <> 'Product Owner'",
         @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'ProjectMembers') 
           AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'Id' AND object_id = OBJECT_ID('ProjectMembers'))
         ALTER TABLE ProjectMembers ADD Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID()",
         @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'ProjectMembers') 
-          AND EXISTS (SELECT * FROM sys.key_constraints WHERE name LIKE 'PK__ProjectM%')
+          AND EXISTS (SELECT * FROM sys.columns WHERE name = 'Id' AND object_id = OBJECT_ID('ProjectMembers'))
+          AND NOT EXISTS (SELECT * FROM sys.key_constraints WHERE parent_object_id = OBJECT_ID('ProjectMembers') AND name = 'PK_ProjectMembers')
         BEGIN
-            ALTER TABLE ProjectMembers DROP CONSTRAINT PK__ProjectMembers__ProjectId_UserId;
-            ALTER TABLE ProjectMembers ADD CONSTRAINT PK_ProjectMembers PRIMARY KEY (Id);
+            DECLARE @pkName NVARCHAR(128);
+            SELECT TOP 1 @pkName = kc.name
+            FROM sys.key_constraints kc
+            WHERE kc.parent_object_id = OBJECT_ID('ProjectMembers') AND kc.[type] = 'PK';
+
+            IF @pkName IS NOT NULL
+            BEGIN
+                DECLARE @dropSql NVARCHAR(MAX) = N'ALTER TABLE ProjectMembers DROP CONSTRAINT ' + QUOTENAME(@pkName);
+                EXEC sp_executesql @dropSql;
+            END
+
+            IF NOT EXISTS (SELECT * FROM sys.key_constraints WHERE parent_object_id = OBJECT_ID('ProjectMembers') AND [type] = 'PK')
+                ALTER TABLE ProjectMembers ADD CONSTRAINT PK_ProjectMembers PRIMARY KEY (Id);
         END",
 
         @"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Sprints')
@@ -154,13 +178,19 @@ public class DatabaseContext
             Goal NVARCHAR(500),
             StartDate DATE NOT NULL,
             EndDate DATE NOT NULL,
+            DurationWeeks INT NOT NULL DEFAULT 1,
             Status NVARCHAR(20) DEFAULT 'Planning' CHECK (Status IN ('Planning', 'Active', 'Completed', 'Cancelled')),
-            CreatedAt DATETIME2 DEFAULT GETDATE()
+            CreatedAt DATETIME2 DEFAULT GETDATE(),
+            UpdatedAt DATETIME2 DEFAULT GETDATE()
         )",
 
         @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'Sprints') 
           AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'Description' AND object_id = OBJECT_ID('Sprints'))
         ALTER TABLE Sprints ADD Description NVARCHAR(500)",
+
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'Sprints') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'DurationWeeks' AND object_id = OBJECT_ID('Sprints'))
+        ALTER TABLE Sprints ADD DurationWeeks INT NOT NULL DEFAULT 1",
 
         @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'Sprints') 
           AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'UpdatedAt' AND object_id = OBJECT_ID('Sprints'))
@@ -180,7 +210,8 @@ public class DatabaseContext
             [Key] NVARCHAR(50),
             AssigneeId UNIQUEIDENTIFIER REFERENCES Users(Id),
             CreatedBy UNIQUEIDENTIFIER REFERENCES Users(Id),
-            CreatedAt DATETIME2 DEFAULT GETDATE()
+            CreatedAt DATETIME2 DEFAULT GETDATE(),
+            UpdatedAt DATETIME2 DEFAULT GETDATE()
         )",
         @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'UserStories') 
           AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'Key' AND object_id = OBJECT_ID('UserStories'))
@@ -188,6 +219,9 @@ public class DatabaseContext
         @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'UserStories') 
           AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'AssigneeId' AND object_id = OBJECT_ID('UserStories'))
         ALTER TABLE UserStories ADD AssigneeId UNIQUEIDENTIFIER REFERENCES Users(Id)",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'UserStories') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'UpdatedAt' AND object_id = OBJECT_ID('UserStories'))
+        ALTER TABLE UserStories ADD UpdatedAt DATETIME2 DEFAULT GETDATE()",
 
         @"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Tasks')
         CREATE TABLE Tasks (
@@ -198,11 +232,22 @@ public class DatabaseContext
             EstimatedHours INT,
             ActualHours INT DEFAULT 0,
             Status NVARCHAR(20) DEFAULT 'Todo' CHECK (Status IN ('Todo', 'InProgress', 'Done', 'Blocked')),
-            AssignedTo UNIQUEIDENTIFIER REFERENCES Users(Id),
+            Priority INT NOT NULL DEFAULT 1,
+            AssignedToId UNIQUEIDENTIFIER REFERENCES Users(Id),
             CreatedAt DATETIME2 DEFAULT GETDATE(),
             UpdatedAt DATETIME2 DEFAULT GETDATE(),
             CompletedAt DATETIME2
         )",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'Tasks') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'Priority' AND object_id = OBJECT_ID('Tasks'))
+        ALTER TABLE Tasks ADD Priority INT NOT NULL DEFAULT 1",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'Tasks') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'AssignedToId' AND object_id = OBJECT_ID('Tasks'))
+        ALTER TABLE Tasks ADD AssignedToId UNIQUEIDENTIFIER REFERENCES Users(Id)",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'Tasks') 
+          AND EXISTS (SELECT * FROM sys.columns WHERE name = 'AssignedTo' AND object_id = OBJECT_ID('Tasks'))
+          AND EXISTS (SELECT * FROM sys.columns WHERE name = 'AssignedToId' AND object_id = OBJECT_ID('Tasks'))
+        EXEC sp_executesql N'UPDATE Tasks SET AssignedToId = AssignedTo WHERE AssignedToId IS NULL AND AssignedTo IS NOT NULL'",
         @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'Tasks') 
           AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'UpdatedAt' AND object_id = OBJECT_ID('Tasks'))
         ALTER TABLE Tasks ADD UpdatedAt DATETIME2 DEFAULT GETDATE()",
@@ -216,7 +261,7 @@ public class DatabaseContext
             Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
             SprintId UNIQUEIDENTIFIER NOT NULL REFERENCES Sprints(Id),
             UserId UNIQUEIDENTIFIER NOT NULL REFERENCES Users(Id),
-            Date DATE NOT NULL,
+            Date DATE NOT NULL DEFAULT CONVERT(date, GETDATE()),
             Yesterday NVARCHAR(500),
             Today NVARCHAR(500),
             Blockers NVARCHAR(500),
@@ -278,6 +323,63 @@ public class DatabaseContext
         )",
         @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'ProjectInvitations') 
           AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'RespondedAt' AND object_id = OBJECT_ID('ProjectInvitations'))
-        ALTER TABLE ProjectInvitations ADD RespondedAt DATETIME2 NULL"
+        ALTER TABLE ProjectInvitations ADD RespondedAt DATETIME2 NULL",
+
+        @"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'SprintRetrospectives')
+        CREATE TABLE SprintRetrospectives (
+            Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+            SprintId UNIQUEIDENTIFIER NOT NULL REFERENCES Sprints(Id),
+            FacilitatorId UNIQUEIDENTIFIER NULL REFERENCES Users(Id),
+            Date DATETIME2 NOT NULL DEFAULT GETDATE(),
+            MoodRating DECIMAL(3,1) NOT NULL DEFAULT 5.0,
+            Template NVARCHAR(50) DEFAULT 'StartStopContinue',
+            Notes NVARCHAR(1000),
+            IsCompleted BIT NOT NULL DEFAULT 0,
+            CreatedAt DATETIME2 DEFAULT GETDATE(),
+            UpdatedAt DATETIME2 NULL
+        )",
+
+        @"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'RetrospectiveItems')
+        CREATE TABLE RetrospectiveItems (
+            Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+            RetrospectiveId UNIQUEIDENTIFIER NOT NULL REFERENCES SprintRetrospectives(Id),
+            Type NVARCHAR(50) NOT NULL,
+            Content NVARCHAR(1000) NOT NULL,
+            UserId UNIQUEIDENTIFIER NULL REFERENCES Users(Id),
+            Votes INT NOT NULL DEFAULT 0,
+            CreatedAt DATETIME2 DEFAULT GETDATE()
+        )",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'RetrospectiveItems') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'Votes' AND object_id = OBJECT_ID('RetrospectiveItems'))
+        ALTER TABLE RetrospectiveItems ADD Votes INT NOT NULL DEFAULT 0",
+
+        @"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'RetrospectiveActionItems')
+        CREATE TABLE RetrospectiveActionItems (
+            Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+            RetrospectiveId UNIQUEIDENTIFIER NOT NULL REFERENCES SprintRetrospectives(Id),
+            Action NVARCHAR(500) NOT NULL,
+            AssignedToId UNIQUEIDENTIFIER NULL REFERENCES Users(Id),
+            DueDate DATE NOT NULL,
+            Status NVARCHAR(20) NOT NULL DEFAULT 'Pending',
+            CompletedAt DATETIME2 NULL,
+            CreatedById UNIQUEIDENTIFIER NULL REFERENCES Users(Id),
+            CreatedAt DATETIME2 DEFAULT GETDATE()
+        )",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'RetrospectiveActionItems') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'Action' AND object_id = OBJECT_ID('RetrospectiveActionItems'))
+        ALTER TABLE RetrospectiveActionItems ADD Action NVARCHAR(500) NULL",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'RetrospectiveActionItems') 
+          AND EXISTS (SELECT * FROM sys.columns WHERE name = 'Description' AND object_id = OBJECT_ID('RetrospectiveActionItems'))
+          AND EXISTS (SELECT * FROM sys.columns WHERE name = 'Action' AND object_id = OBJECT_ID('RetrospectiveActionItems'))
+        EXEC sp_executesql N'UPDATE RetrospectiveActionItems SET Action = Description WHERE Action IS NULL AND Description IS NOT NULL'",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'RetrospectiveActionItems') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'AssignedToId' AND object_id = OBJECT_ID('RetrospectiveActionItems'))
+        ALTER TABLE RetrospectiveActionItems ADD AssignedToId UNIQUEIDENTIFIER NULL REFERENCES Users(Id)",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'RetrospectiveActionItems') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'CreatedById' AND object_id = OBJECT_ID('RetrospectiveActionItems'))
+        ALTER TABLE RetrospectiveActionItems ADD CreatedById UNIQUEIDENTIFIER NULL REFERENCES Users(Id)",
+        @"IF EXISTS (SELECT * FROM sys.tables WHERE name = 'RetrospectiveActionItems') 
+          AND NOT EXISTS (SELECT * FROM sys.columns WHERE name = 'CompletedAt' AND object_id = OBJECT_ID('RetrospectiveActionItems'))
+        ALTER TABLE RetrospectiveActionItems ADD CompletedAt DATETIME2 NULL"
     };
 }
